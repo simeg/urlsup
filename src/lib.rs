@@ -22,27 +22,52 @@ impl Auditor {
         // Find links from files
         let links = self.find_links(paths);
 
-        // Query them to see if they are up
-        let val_results = self.validate_links(links).await;
+        // Save link count to avoid having to clone link list
+        let link_count = links.len();
 
-        let invalid_links: Vec<(String, StatusCode)> = val_results
+        // Deduplicate links to avoid duplicate work
+        let dedup_links = self.dedup_links(links);
+
+        println!(
+            "Found {} unique links, {} in total",
+            &dedup_links.len(),
+            link_count
+        );
+
+        let mut count = 1;
+        for link in &dedup_links {
+            println!("{:4}. {}", count, link.to_string());
+            count += 1;
+        }
+
+        println!("Checking links...");
+
+        // Query them to see if they are up
+        let val_results = self.validate_links(dedup_links).await;
+
+        let non_ok_links: Vec<(String, StatusCode)> = val_results
             .into_iter()
             .filter(|(_link, status)| !status.is_success())
-            //            .map(|(_link, status)| (_link, StatusCode::NOT_FOUND))
             .collect();
 
-        if invalid_links.is_empty() {
+        if non_ok_links.is_empty() {
             println!("No issues!");
             std::process::exit(0)
         }
 
         println!("\n> Issues");
         let mut count = 1;
-        for (link, status_code) in invalid_links {
+        for (link, status_code) in non_ok_links {
             println!("{:4}. {} {}", count, status_code.as_u16(), link);
             count += 1;
         }
         std::process::exit(1)
+    }
+
+    fn dedup_links(&self, mut links: Vec<String>) -> Vec<String> {
+        links.sort();
+        links.dedup();
+        links
     }
 
     fn find_links(&self, paths: Vec<&Path>) -> Vec<String> {
@@ -60,13 +85,6 @@ impl Auditor {
             result.extend(valid_links.into_iter());
         }
 
-        println!("Found {} links", &result.len());
-
-        let mut count = 1;
-        for link in &result {
-            println!("{:4}. {}", count, link.to_string());
-            count += 1;
-        }
         result
     }
 
@@ -130,8 +148,6 @@ impl Auditor {
     }
 
     async fn validate_links(&self, links: Vec<String>) -> Vec<(String, StatusCode)> {
-        println!("Checking links...");
-
         let client = Client::new();
         let mut links_and_responses = stream::iter(links)
             .map(|link| {
