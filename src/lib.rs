@@ -3,10 +3,12 @@ use grep::regex::RegexMatcher;
 use grep::searcher::sinks::UTF8;
 use grep::searcher::Searcher;
 use regex::Regex;
+use reqwest::redirect::Policy;
 use reqwest::{Client, StatusCode};
 
 use std::io::Error;
 use std::path::Path;
+use std::time::Duration;
 
 const MARKDOWN_LINK_PATTERN: &str = r"\[[^\]]+\]\(<?([^)<>]+)>?\)";
 const THREAD_COUNT: usize = 50;
@@ -148,7 +150,17 @@ impl Auditor {
     }
 
     async fn validate_links(&self, links: Vec<String>) -> Vec<(String, StatusCode)> {
-        let client = Client::new();
+        let timeout = Duration::from_secs(10);
+        let redirect_policy = Policy::limited(10);
+        let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
+
+        let client = Client::builder()
+            .timeout(timeout)
+            .redirect(redirect_policy)
+            .user_agent(user_agent)
+            .build()
+            .unwrap();
+
         let mut links_and_responses = stream::iter(links)
             .map(|link| {
                 let client = &client;
@@ -173,6 +185,7 @@ impl Auditor {
 #[cfg(test)]
 mod tests {
     #![allow(non_snake_case)]
+
     use super::*;
     use std::io::Write;
 
