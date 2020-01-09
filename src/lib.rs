@@ -48,14 +48,16 @@ impl Auditor {
     fn find_links(&self, paths: Vec<&Path>) -> Vec<String> {
         let mut result = vec![];
         for path in paths {
-            let links = self.search_for_links(path).unwrap_or_else(|_| {
+            let links = self.get_links_from_file(path).unwrap_or_else(|_| {
                 panic!(
                     "Something went wrong parsing links in file: {}",
                     path.display()
                 )
             });
 
-            result.extend(links.into_iter());
+            let valid_links = self.get_valid_links(links);
+
+            result.extend(valid_links.into_iter());
         }
 
         println!("Found {} links", &result.len());
@@ -68,7 +70,7 @@ impl Auditor {
         result
     }
 
-    fn search_for_links(&self, path: &Path) -> Result<Vec<String>, Error> {
+    fn get_links_from_file(&self, path: &Path) -> Result<Vec<String>, Error> {
         let matcher = RegexMatcher::new(MARKDOWN_LINK_PATTERN).unwrap();
 
         let mut matches = vec![];
@@ -76,12 +78,16 @@ impl Auditor {
             &matcher,
             &path,
             UTF8(|_lnum, line| {
-                matches.push(line.to_string());
+                matches.push(line.trim().to_string());
                 Ok(true)
             }),
         )?;
 
-        let links: Vec<String> = matches
+        Ok(matches)
+    }
+
+    fn get_valid_links(&self, links: Vec<String>) -> Vec<String> {
+        links
             .into_iter()
             .map(|mat| self.parse_link(mat))
             .map(|link| link.unwrap_or_else(|| "".to_string()))
@@ -97,9 +103,7 @@ impl Auditor {
 
                 link
             })
-            .collect();
-
-        Ok(links)
+            .collect()
     }
 
     fn parse_link(&self, md_link: String) -> Option<String> {
@@ -151,7 +155,9 @@ impl Auditor {
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn test_parse_link() {
@@ -197,5 +203,45 @@ mod tests {
             let actual = auditor.is_valid_link(valid_link.to_string());
             assert_eq!(actual, true);
         }
+    }
+
+    #[test]
+    fn test_get_links_from_file() -> Result<(), Box<dyn std::error::Error>> {
+        let auditor = Auditor {};
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(
+            "arbitrary [something](http://specific-link.one) arbitrary\n\
+             arbitrary [something](http://specific-link.two) arbitrary"
+                .as_bytes(),
+        )?;
+        let links = auditor.get_links_from_file(file.path()).unwrap();
+
+        let expected_link1 = &links.get(0).unwrap().as_str().to_owned();
+        let expected_link2 = &links.get(1).unwrap().as_str().to_owned();
+
+        assert_eq!(
+            expected_link1,
+            "arbitrary [something](http://specific-link.one) arbitrary"
+        );
+        assert_eq!(
+            expected_link2,
+            "arbitrary [something](http://specific-link.two) arbitrary"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_links_from_file__when_non_existing_file() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let auditor = Auditor {};
+        let non_existing_file = "non_existing_file.txt";
+        let is_err = auditor
+            .get_links_from_file(non_existing_file.as_ref())
+            .is_err();
+
+        assert!(is_err);
+
+        Ok(())
     }
 }
