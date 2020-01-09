@@ -107,8 +107,9 @@ impl Auditor {
     }
 
     fn parse_link(&self, md_link: String) -> Option<String> {
-        let md_link_pattern = r"\[[^]]+]\(<?([^)<>]+)>?\)";
-        let matches = Regex::new(md_link_pattern).unwrap().captures(&md_link);
+        let matches = Regex::new(MARKDOWN_LINK_PATTERN)
+            .unwrap()
+            .captures(&md_link);
 
         match matches {
             None => None,
