@@ -83,10 +83,15 @@ impl Auditor {
 
         let links: Vec<String> = matches
             .into_iter()
-            .map(|m| self.parse_link(m))
-            .filter(|l| self.is_valid_link(l.to_string()))
+            .map(|mat| self.parse_link(mat))
+            .map(|link| link.unwrap_or_else(|| "".to_string()))
+            .filter(|link| !link.is_empty())
+            .filter(|link| self.is_valid_link(link.to_string()))
             .map(|link| {
+                // reqwest doesn't like links without protocol
                 if !link.starts_with("http") {
+                    // Use HTTP over HTTPS because not every site supports HTTPS
+                    // If site supports HTTPS it might (should) redirect HTTP -> HTTPS
                     return ["http://", link.as_str()].concat();
                 }
 
@@ -97,19 +102,17 @@ impl Auditor {
         Ok(links)
     }
 
-    fn parse_link(&self, md_link: String) -> String {
-        // TODO: Do this in a better way
-        // TODO: Error handling
-        Regex::new(r"\[[^]]+]\(<?([^)<>]+)>?\)")
-            .unwrap()
-            .captures(&md_link)
-            .unwrap()
-            .iter()
-            .map(|m| m.unwrap().as_str().to_string())
-            .collect::<Vec<String>>()
-            .get(1)
-            .unwrap()
-            .to_owned()
+    fn parse_link(&self, md_link: String) -> Option<String> {
+        let md_link_pattern = r"\[[^]]+]\(<?([^)<>]+)>?\)";
+        let matches = Regex::new(md_link_pattern).unwrap().captures(&md_link);
+
+        match matches {
+            None => None,
+            Some(caps) => match caps.get(1) {
+                None => None,
+                Some(m) => Some(m.as_str().to_string()),
+            },
+        }
     }
 
     fn is_valid_link(&self, link: String) -> bool {
@@ -153,17 +156,26 @@ mod tests {
     #[test]
     fn test_parse_link() {
         let auditor = Auditor {};
-        let md_link = "[something](http://foo.bar)".to_string();
+        let md_link = "arbitrary [something](http://foo.bar) arbitrary".to_string();
         let expected = "http://foo.bar".to_string();
-        let actual = auditor.parse_link(md_link);
+        let actual = auditor.parse_link(md_link).unwrap();
         assert_eq!(actual, expected);
     }
 
     #[test]
     fn test_parse_img_link() {
         let auditor = Auditor {};
-        let md_link = "blabla ![image](http://foo.bar) blabla".to_string();
+        let md_link = "arbitrary ![image](http://foo.bar) arbitrary".to_string();
         let expected = "http://foo.bar".to_string();
+        let actual = auditor.parse_link(md_link).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_parse_bad_link() {
+        let auditor = Auditor {};
+        let md_link = "arbitrary [something]http://foo.bar arbitrary".to_string();
+        let expected = None;
         let actual = auditor.parse_link(md_link);
         assert_eq!(actual, expected);
     }
