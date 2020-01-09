@@ -164,7 +164,7 @@ impl Auditor {
         let mut links_and_responses = stream::iter(links)
             .map(|link| {
                 let client = &client;
-                async move { (link.clone(), client.get(&link).send().await) }
+                async move { (link.clone(), client.head(&link).send().await) }
             })
             .buffer_unordered(THREAD_COUNT);
 
