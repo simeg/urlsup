@@ -167,4 +167,23 @@ mod tests {
         let actual = auditor.parse_link(md_link);
         assert_eq!(actual, expected);
     }
+
+    #[test]
+    fn test_is_valid_link() {
+        let auditor = Auditor {};
+        for invalid_link in &["#arbitrary", "../arbitrary"] {
+            let actual = auditor.is_valid_link(invalid_link.to_string());
+            assert_eq!(actual, false);
+        }
+
+        for valid_link in &[
+            "http://arbitrary",
+            "https://arbitrary",
+            "www.arbitrary.com",
+            "arbitrary.com",
+        ] {
+            let actual = auditor.is_valid_link(valid_link.to_string());
+            assert_eq!(actual, true);
+        }
+    }
 }
