@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate lazy_static;
+
 use futures::{stream, StreamExt};
 use grep::regex::RegexMatcher;
 use grep::searcher::sinks::UTF8;
@@ -10,8 +13,13 @@ use std::io::Error;
 use std::path::Path;
 use std::time::Duration;
 
-const MARKDOWN_LINK_PATTERN: &str = r"\[[^\]]+\]\(<?([^)<>]+)>?\)";
-const MARKDOWN_BADGE_LINK_PATTERN: &str = r"(: ([-a-zA-Z0-9()@:%_+.~#?&//=])+)";
+lazy_static! {
+    static ref MARKDOWN_LINK_MATCHER: Regex = Regex::new(r"\[[^\]]+\]\(<?([^)<>]+)>?\)").unwrap();
+    static ref MARKDOWN_BADGE_LINK_MATCHER: Regex =
+        Regex::new(r"(: ([-a-zA-Z0-9()@:%_+.~#?&//=])+)").unwrap();
+}
+
+// Cannot be static for some reason
 const MARKDOWN_LINKS_PATTERN: &str =
     r"(\[[^\]]+\]\(<?([^)<>]+)>?\))|(\[[^\]]+\]: ([-a-zA-Z0-9()@:%_\+.~#?&/=])+)";
 
@@ -130,7 +138,7 @@ impl Auditor {
     }
 
     fn parse_link(&self, link: String) -> Option<String> {
-        let link_match = Regex::new(MARKDOWN_LINK_PATTERN).unwrap().captures(&link);
+        let link_match = MARKDOWN_LINK_MATCHER.captures(&link);
 
         match link_match {
             Some(caps) => match caps.get(1) {
@@ -138,9 +146,7 @@ impl Auditor {
                 Some(m) => Some(m.as_str().to_string()),
             },
             _ => {
-                let badge_link_match = Regex::new(MARKDOWN_BADGE_LINK_PATTERN)
-                    .unwrap()
-                    .captures(&link);
+                let badge_link_match = MARKDOWN_BADGE_LINK_MATCHER.captures(&link);
 
                 match badge_link_match {
                     None => None,
