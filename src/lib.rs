@@ -11,10 +11,13 @@ use std::path::Path;
 use std::time::Duration;
 
 const MARKDOWN_LINK_PATTERN: &str = r"\[[^\]]+\]\(<?([^)<>]+)>?\)";
+const MARKDOWN_BADGE_LINK_PATTERN: &str = r"(: ([-a-zA-Z0-9()@:%_+.~#?&//=])+)";
+const MARKDOWN_LINKS_PATTERN: &str =
+    r"(\[[^\]]+\]\(<?([^)<>]+)>?\))|(\[[^\]]+\]: ([-a-zA-Z0-9()@:%_\+.~#?&/=])+)";
+
 const THREAD_COUNT: usize = 50;
 
 pub struct Auditor {}
-
 pub struct AuditorOptions {}
 
 impl Auditor {
@@ -91,7 +94,7 @@ impl Auditor {
     }
 
     fn get_links_from_file(&self, path: &Path) -> Result<Vec<String>, Error> {
-        let matcher = RegexMatcher::new(MARKDOWN_LINK_PATTERN).unwrap();
+        let matcher = RegexMatcher::new(MARKDOWN_LINKS_PATTERN).unwrap();
 
         let mut matches = vec![];
         Searcher::new().search_path(
@@ -126,17 +129,27 @@ impl Auditor {
             .collect()
     }
 
-    fn parse_link(&self, md_link: String) -> Option<String> {
-        let matches = Regex::new(MARKDOWN_LINK_PATTERN)
-            .unwrap()
-            .captures(&md_link);
+    fn parse_link(&self, link: String) -> Option<String> {
+        let link_match = Regex::new(MARKDOWN_LINK_PATTERN).unwrap().captures(&link);
 
-        match matches {
-            None => None,
+        match link_match {
             Some(caps) => match caps.get(1) {
                 None => None,
                 Some(m) => Some(m.as_str().to_string()),
             },
+            _ => {
+                let badge_link_match = Regex::new(MARKDOWN_BADGE_LINK_PATTERN)
+                    .unwrap()
+                    .captures(&link);
+
+                match badge_link_match {
+                    None => None,
+                    Some(caps) => match caps.get(1) {
+                        None => None,
+                        Some(m) => Some(m.as_str().to_string().split_off(2)),
+                    },
+                }
+            }
         }
     }
 
@@ -217,6 +230,15 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_badge_link() {
+        let auditor = Auditor {};
+        let md_link = "arbitrary [something]: http://foo.bar arbitrary".to_string();
+        let expected = "http://foo.bar".to_string();
+        let actual = auditor.parse_link(md_link).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn test_is_valid_link() {
         let auditor = Auditor {};
         for invalid_link in &["#arbitrary", "../arbitrary"] {
@@ -241,13 +263,15 @@ mod tests {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(
             "arbitrary [something](http://specific-link.one) arbitrary\n\
-             arbitrary [something](http://specific-link.two) arbitrary"
+             arbitrary [something](http://specific-link.two) arbitrary\n\
+             arbitrary [badge-something]: http://specific-link.three arbitrary"
                 .as_bytes(),
         )?;
         let links = auditor.get_links_from_file(file.path()).unwrap();
 
         let expected_link1 = &links.get(0).unwrap().as_str().to_owned();
         let expected_link2 = &links.get(1).unwrap().as_str().to_owned();
+        let expected_link3 = &links.get(2).unwrap().as_str().to_owned();
 
         assert_eq!(
             expected_link1,
@@ -256,6 +280,10 @@ mod tests {
         assert_eq!(
             expected_link2,
             "arbitrary [something](http://specific-link.two) arbitrary"
+        );
+        assert_eq!(
+            expected_link3,
+            "arbitrary [badge-something]: http://specific-link.three arbitrary"
         );
 
         Ok(())
