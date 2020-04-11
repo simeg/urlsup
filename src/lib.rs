@@ -13,21 +13,25 @@ use std::path::Path;
 use std::time::Duration;
 
 pub struct HttpStatusCode {
-    pub num: u16,
-    pub is_unknown: bool,
+    num: u16,
+    is_unknown: bool,
 }
 
 impl HttpStatusCode {
     pub fn is_ok(&self) -> bool {
-        return self.num == 200;
+        self.num == 200
     }
 
     pub fn is_not_ok(&self) -> bool {
-        return !self.is_ok();
+        !self.is_ok()
     }
 
     pub fn as_u16(&self) -> u16 {
-        return self.num;
+        self.num
+    }
+
+    pub fn is_unknown(&self) -> bool {
+        self.is_unknown
     }
 }
 
