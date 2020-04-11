@@ -7,11 +7,29 @@ use grep::searcher::sinks::UTF8;
 use grep::searcher::Searcher;
 use regex::Regex;
 use reqwest::redirect::Policy;
-use reqwest::{Client, StatusCode};
 
 use std::io::Error;
 use std::path::Path;
 use std::time::Duration;
+
+pub struct HttpStatusCode {
+    pub num: u16,
+    pub is_unknown: bool,
+}
+
+impl HttpStatusCode {
+    pub fn is_ok(&self) -> bool {
+        return self.num == 200;
+    }
+
+    pub fn is_not_ok(&self) -> bool {
+        return !self.is_ok();
+    }
+
+    pub fn as_u16(&self) -> u16 {
+        return self.num;
+    }
+}
 
 lazy_static! {
     static ref MARKDOWN_LINK_MATCHER: Regex = Regex::new(r"\[[^\]]+\]\(<?([^)<>]+)>?\)").unwrap();
@@ -58,9 +76,9 @@ impl Auditor {
         // Query them to see if they are up
         let val_results = self.validate_links(dedup_links).await;
 
-        let non_ok_links: Vec<(String, StatusCode)> = val_results
+        let non_ok_links: Vec<(String, HttpStatusCode)> = val_results
             .into_iter()
-            .filter(|(_link, status)| !status.is_success())
+            .filter(|(_link, status)| status.is_not_ok())
             .collect();
 
         if non_ok_links.is_empty() {
@@ -168,15 +186,15 @@ impl Auditor {
         true
     }
 
-    async fn validate_links(&self, links: Vec<String>) -> Vec<(String, StatusCode)> {
+    async fn validate_links(&self, links: Vec<String>) -> Vec<(String, HttpStatusCode)> {
         let timeout = Duration::from_secs(10);
         let redirect_policy = Policy::limited(10);
         let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
-        let client = Client::builder()
-            .timeout(timeout)
+        let client = reqwest::Client::builder()
             .redirect(redirect_policy)
             .user_agent(user_agent)
+            .timeout(timeout)
             .build()
             .unwrap();
 
@@ -189,9 +207,33 @@ impl Auditor {
 
         let mut result = vec![];
         while let Some((link, response)) = links_and_responses.next().await {
-            let link_w_status_code = match response {
-                Ok(res) => (link, res.status()),
-                Err(_) => (link, StatusCode::INTERNAL_SERVER_ERROR),
+            let link_w_status_code: (String, HttpStatusCode) = match response {
+                Ok(res) => (
+                    link,
+                    HttpStatusCode {
+                        is_unknown: false,
+                        num: res.status().as_u16(),
+                    },
+                ),
+                Err(e) => {
+                    if e.status().is_none() {
+                        (
+                            link,
+                            HttpStatusCode {
+                                is_unknown: true,
+                                num: 999,
+                            },
+                        )
+                    } else {
+                        (
+                            link,
+                            HttpStatusCode {
+                                is_unknown: false,
+                                num: e.status().unwrap().as_u16(),
+                            },
+                        )
+                    }
+                }
             };
 
             result.push(link_w_status_code);
