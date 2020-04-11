@@ -3,6 +3,9 @@
 BIN_NAME = link_auditor
 CARGO = $(shell which cargo)
 
+build:
+	@$(CARGO) build
+
 check:
 	$(CARGO) check --release
 
@@ -16,6 +19,9 @@ fmt:
 
 install:
 	cp ./target/release/$(BIN_NAME) /usr/local/bin/$(BIN_NAME)
+
+link:
+	@ln -sf ./target/debug/$(BIN_NAME) .
 
 lint:
 	$(CARGO) fmt --all -- --check
