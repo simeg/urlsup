@@ -321,22 +321,23 @@ mod tests {
              arbitrary [badge-something]: http://specific-link.three arbitrary"
                 .as_bytes(),
         )?;
-        let links = auditor.get_links_from_file(file.path()).unwrap();
 
-        let expected_link1 = &links.get(0).unwrap().as_str().to_owned();
-        let expected_link2 = &links.get(1).unwrap().as_str().to_owned();
-        let expected_link3 = &links.get(2).unwrap().as_str().to_owned();
+        let actual = auditor.get_links_from_file(file.path()).unwrap();
+
+        let actual_link1 = &actual.get(0).unwrap().as_str().to_owned();
+        let actual_link2 = &actual.get(1).unwrap().as_str().to_owned();
+        let actual_link3 = &actual.get(2).unwrap().as_str().to_owned();
 
         assert_eq!(
-            expected_link1,
+            actual_link1,
             "arbitrary [something](http://specific-link.one) arbitrary"
         );
         assert_eq!(
-            expected_link2,
+            actual_link2,
             "arbitrary [something](http://specific-link.two) arbitrary"
         );
         assert_eq!(
-            expected_link3,
+            actual_link3,
             "arbitrary [badge-something]: http://specific-link.three arbitrary"
         );
 
