@@ -193,7 +193,7 @@ impl Auditor {
     async fn validate_links(&self, links: Vec<String>) -> Vec<(String, HttpStatusCode)> {
         let timeout = Duration::from_secs(10);
         let redirect_policy = Policy::limited(10);
-        let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
+        let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
         let client = reqwest::Client::builder()
             .redirect(redirect_policy)
@@ -254,6 +254,8 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
     #[test]
     fn test_parse_link() {
         let auditor = Auditor {};
@@ -310,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_links_from_file() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_get_links_from_file() -> TestResult {
         let auditor = Auditor {};
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(
@@ -342,8 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_links_from_file__when_non_existing_file() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn test_get_links_from_file__when_non_existing_file() -> TestResult {
         let auditor = Auditor {};
         let non_existing_file = "non_existing_file.txt";
         let is_err = auditor
