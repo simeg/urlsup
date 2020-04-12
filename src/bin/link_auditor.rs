@@ -3,7 +3,7 @@ extern crate link_auditor;
 extern crate clap;
 extern crate futures;
 extern crate grep;
-extern crate regex;
+extern crate linkify;
 extern crate reqwest;
 
 use clap::{App, Arg};

@@ -1,11 +1,8 @@
-#[macro_use]
-extern crate lazy_static;
-
 use futures::{stream, StreamExt};
 use grep::regex::RegexMatcher;
 use grep::searcher::sinks::UTF8;
 use grep::searcher::Searcher;
-use regex::Regex;
+use linkify::{LinkFinder, LinkKind};
 use reqwest::redirect::Policy;
 
 use std::io::Error;
@@ -35,15 +32,8 @@ impl HttpStatusCode {
     }
 }
 
-lazy_static! {
-    static ref MARKDOWN_LINK_MATCHER: Regex = Regex::new(r"\[[^\]]+\]\(<?([^)<>]+)>?\)").unwrap();
-    static ref MARKDOWN_BADGE_LINK_MATCHER: Regex =
-        Regex::new(r"(: ([-a-zA-Z0-9()@:%_+.~#?&//=])+)").unwrap();
-}
-
-// Cannot be static for some reason
-const MARKDOWN_LINKS_PATTERN: &str =
-    r"(\[[^\]]+\]\(<?([^)<>]+)>?\))|(\[[^\]]+\]: ([-a-zA-Z0-9()@:%_\+.~#?&/=])+)";
+const MARKDOWN_URL_PATTERN: &str =
+    r#"(http://|https://)[a-z0-9]+([-.]{1}[a-z0-9]+)*.[a-z]{2,5}(:[0-9]{1,5})?(/.*)?"#;
 
 const THREAD_COUNT: usize = 50;
 
@@ -52,79 +42,82 @@ pub struct AuditorOptions {}
 
 impl Auditor {
     pub async fn check(&self, paths: Vec<&Path>, _opts: AuditorOptions) {
-        println!("> Checking links in {:?}", &paths);
+        println!("> Checking for URLs in {:?}", &paths);
 
-        // Find links from files
-        let links = self.find_links(paths);
+        // Find urls from files
+        let urls = self.find_urls(paths);
 
-        // Save link count to avoid having to clone link list
-        let link_count = links.len();
+        // Save url count to avoid having to clone url list
+        let url_count = urls.len();
 
-        // Deduplicate links to avoid duplicate work
-        let dedup_links = self.dedup_links(links);
+        // Deduplicate urls to avoid duplicate work
+        let dedup_urls = self.dedup(urls);
 
         println!(
-            "Found {} unique links, {} in total",
-            &dedup_links.len(),
-            link_count
+            "Found {} unique URLs, {} in total",
+            &dedup_urls.len(),
+            url_count
         );
 
         let mut count = 1;
-        for link in &dedup_links {
-            println!("{:4}. {}", count, link.to_string());
+        for url in &dedup_urls {
+            println!("{:4}. {}", count, url.to_string());
             count += 1;
         }
 
-        println!("Checking links...");
+        println!("Checking URLs...");
 
         // Query them to see if they are up
-        let val_results = self.validate_links(dedup_links).await;
+        let validation_results = self.validate_urls(dedup_urls).await;
 
-        let non_ok_links: Vec<(String, HttpStatusCode)> = val_results
+        let non_ok_urls: Vec<(String, HttpStatusCode)> = validation_results
             .into_iter()
-            .filter(|(_link, status)| status.is_not_ok())
+            .filter(|(_url, status)| status.is_not_ok())
             .collect();
 
-        if non_ok_links.is_empty() {
+        if non_ok_urls.is_empty() {
             println!("No issues!");
             std::process::exit(0)
         }
 
         println!("\n> Issues");
         let mut count = 1;
-        for (link, status_code) in non_ok_links {
-            println!("{:4}. {} {}", count, status_code.as_u16(), link);
+        for (url, status_code) in non_ok_urls {
+            println!("{:4}. {} {}", count, status_code.as_u16(), url);
             count += 1;
         }
         std::process::exit(1)
     }
 
-    fn dedup_links(&self, mut links: Vec<String>) -> Vec<String> {
-        links.sort();
-        links.dedup();
-        links
+    fn dedup(&self, mut list: Vec<String>) -> Vec<String> {
+        list.sort();
+        list.dedup();
+        list
     }
 
-    fn find_links(&self, paths: Vec<&Path>) -> Vec<String> {
+    fn find_urls(&self, paths: Vec<&Path>) -> Vec<String> {
         let mut result = vec![];
         for path in paths {
-            let links = self.get_links_from_file(path).unwrap_or_else(|_| {
-                panic!(
-                    "Something went wrong parsing links in file: {}",
-                    path.display()
-                )
-            });
+            let urls: Vec<_> = self
+                .find_lines_with_url(path)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Something went wrong parsing URL in file: {}",
+                        path.display()
+                    )
+                })
+                .into_iter()
+                .flat_map(|line| self.parse_urls(line))
+                .collect();
 
-            let valid_links = self.get_valid_links(links);
-
-            result.extend(valid_links.into_iter());
+            result.extend(urls.into_iter());
         }
 
         result
     }
 
-    fn get_links_from_file(&self, path: &Path) -> Result<Vec<String>, Error> {
-        let matcher = RegexMatcher::new(MARKDOWN_LINKS_PATTERN).unwrap();
+    fn find_lines_with_url(&self, path: &Path) -> Result<Vec<String>, Error> {
+        let matcher = RegexMatcher::new(MARKDOWN_URL_PATTERN).unwrap();
 
         let mut matches = vec![];
         Searcher::new().search_path(
@@ -139,58 +132,17 @@ impl Auditor {
         Ok(matches)
     }
 
-    fn get_valid_links(&self, links: Vec<String>) -> Vec<String> {
-        links
-            .into_iter()
-            .map(|mat| self.parse_link(mat))
-            .map(|link| link.unwrap_or_else(|| "".to_string()))
-            .filter(|link| !link.is_empty())
-            .filter(|link| self.is_valid_link(link.to_string()))
-            .map(|link| {
-                // reqwest doesn't like links without protocol
-                if !link.starts_with("http") {
-                    // Use HTTP over HTTPS because not every site supports HTTPS
-                    // If site supports HTTPS it might (should) redirect HTTP -> HTTPS
-                    return ["http://", link.as_str()].concat();
-                }
+    fn parse_urls(&self, line: String) -> Vec<String> {
+        let mut finder = LinkFinder::new();
+        finder.kinds(&[LinkKind::Url]);
 
-                link
-            })
+        finder
+            .links(line.as_str())
+            .map(|url| url.as_str().to_string())
             .collect()
     }
 
-    fn parse_link(&self, link: String) -> Option<String> {
-        let link_match = MARKDOWN_LINK_MATCHER.captures(&link);
-
-        match link_match {
-            Some(caps) => match caps.get(1) {
-                None => None,
-                Some(m) => Some(m.as_str().to_string()),
-            },
-            _ => {
-                let badge_link_match = MARKDOWN_BADGE_LINK_MATCHER.captures(&link);
-
-                match badge_link_match {
-                    None => None,
-                    Some(caps) => match caps.get(1) {
-                        None => None,
-                        Some(m) => Some(m.as_str().to_string().split_off(2)),
-                    },
-                }
-            }
-        }
-    }
-
-    fn is_valid_link(&self, link: String) -> bool {
-        // Relative links
-        if link.starts_with("..") || link.starts_with('#') {
-            return false;
-        }
-
-        true
-    }
-
-    async fn validate_links(&self, links: Vec<String>) -> Vec<(String, HttpStatusCode)> {
+    async fn validate_urls(&self, urls: Vec<String>) -> Vec<(String, HttpStatusCode)> {
         let timeout = Duration::from_secs(10);
         let redirect_policy = Policy::limited(10);
         let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
@@ -202,18 +154,18 @@ impl Auditor {
             .build()
             .unwrap();
 
-        let mut links_and_responses = stream::iter(links)
-            .map(|link| {
+        let mut urls_and_responses = stream::iter(urls)
+            .map(|url| {
                 let client = &client;
-                async move { (link.clone(), client.head(&link).send().await) }
+                async move { (url.clone(), client.head(&url).send().await) }
             })
             .buffer_unordered(THREAD_COUNT);
 
         let mut result = vec![];
-        while let Some((link, response)) = links_and_responses.next().await {
-            let link_w_status_code: (String, HttpStatusCode) = match response {
+        while let Some((url, response)) = urls_and_responses.next().await {
+            let url_w_status_code: (String, HttpStatusCode) = match response {
                 Ok(res) => (
-                    link,
+                    url,
                     HttpStatusCode {
                         is_unknown: false,
                         num: res.status().as_u16(),
@@ -222,7 +174,7 @@ impl Auditor {
                 Err(e) => {
                     if e.status().is_none() {
                         (
-                            link,
+                            url,
                             HttpStatusCode {
                                 is_unknown: true,
                                 num: 999,
@@ -230,7 +182,7 @@ impl Auditor {
                         )
                     } else {
                         (
-                            link,
+                            url,
                             HttpStatusCode {
                                 is_unknown: false,
                                 num: e.status().unwrap().as_u16(),
@@ -240,7 +192,7 @@ impl Auditor {
                 }
             };
 
-            result.push(link_w_status_code);
+            result.push(url_w_status_code);
         }
 
         result
@@ -257,99 +209,78 @@ mod tests {
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     #[test]
-    fn test_parse_link() {
+    fn test_parse_urls() {
         let auditor = Auditor {};
-        let md_link = "arbitrary [something](http://foo.bar) arbitrary".to_string();
-        let expected = "http://foo.bar".to_string();
-        let actual = auditor.parse_link(md_link).unwrap();
+        let md_link =
+            "arbitrary [something](http://foo.bar) arbitrary http://foo2.bar arbitrary".to_string();
+        let expected = vec!["http://foo.bar".to_string(), "http://foo2.bar".to_string()];
+        let actual = auditor.parse_urls(md_link);
         assert_eq!(actual, expected);
     }
 
     #[test]
-    fn test_parse_img_link() {
+    fn test_parse_img_url() {
         let auditor = Auditor {};
         let md_link = "arbitrary ![image](http://foo.bar) arbitrary".to_string();
-        let expected = "http://foo.bar".to_string();
-        let actual = auditor.parse_link(md_link).unwrap();
+        let expected = vec!["http://foo.bar".to_string()];
+        let actual = auditor.parse_urls(md_link);
         assert_eq!(actual, expected);
     }
 
     #[test]
-    fn test_parse_bad_link() {
-        let auditor = Auditor {};
-        let md_link = "arbitrary [something]http://foo.bar arbitrary".to_string();
-        let expected = None;
-        let actual = auditor.parse_link(md_link);
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn test_parse_badge_link() {
+    fn test_parse_badge_url() {
         let auditor = Auditor {};
         let md_link = "arbitrary [something]: http://foo.bar arbitrary".to_string();
-        let expected = "http://foo.bar".to_string();
-        let actual = auditor.parse_link(md_link).unwrap();
+        let expected = vec!["http://foo.bar".to_string()];
+        let actual = auditor.parse_urls(md_link);
         assert_eq!(actual, expected);
     }
 
     #[test]
-    fn test_is_valid_link() {
-        let auditor = Auditor {};
-        for invalid_link in &["#arbitrary", "../arbitrary"] {
-            let actual = auditor.is_valid_link(invalid_link.to_string());
-            assert_eq!(actual, false);
-        }
-
-        for valid_link in &[
-            "http://arbitrary",
-            "https://arbitrary",
-            "www.arbitrary.com",
-            "arbitrary.com",
-        ] {
-            let actual = auditor.is_valid_link(valid_link.to_string());
-            assert_eq!(actual, true);
-        }
-    }
-
-    #[test]
-    fn test_get_links_from_file() -> TestResult {
+    fn test_find_lines_with_url__from_file() -> TestResult {
         let auditor = Auditor {};
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(
             "arbitrary [something](http://specific-link.one) arbitrary\n\
              arbitrary [something](http://specific-link.two) arbitrary\n\
-             arbitrary [badge-something]: http://specific-link.three arbitrary"
+             arbitrary [badge-something]: http://specific-link.three arbitrary\n\
+             arbitrary http://specific-link.four arbitrary"
                 .as_bytes(),
         )?;
 
-        let actual = auditor.get_links_from_file(file.path()).unwrap();
+        let actual = auditor.find_lines_with_url(file.path()).unwrap();
 
-        let actual_link1 = &actual.get(0).unwrap().as_str().to_owned();
-        let actual_link2 = &actual.get(1).unwrap().as_str().to_owned();
-        let actual_link3 = &actual.get(2).unwrap().as_str().to_owned();
+        let actual_line1 = &actual.get(0).unwrap().as_str().to_owned();
+        let actual_line2 = &actual.get(1).unwrap().as_str().to_owned();
+        let actual_line3 = &actual.get(2).unwrap().as_str().to_owned();
+        let actual_line4 = &actual.get(3).unwrap().as_str().to_owned();
 
         assert_eq!(
-            actual_link1,
+            actual_line1,
             "arbitrary [something](http://specific-link.one) arbitrary"
         );
         assert_eq!(
-            actual_link2,
+            actual_line2,
             "arbitrary [something](http://specific-link.two) arbitrary"
         );
         assert_eq!(
-            actual_link3,
+            actual_line3,
             "arbitrary [badge-something]: http://specific-link.three arbitrary"
+        );
+        assert_eq!(
+            actual_line4,
+            "arbitrary http://specific-link.four arbitrary"
         );
 
         Ok(())
     }
 
     #[test]
-    fn test_get_links_from_file__when_non_existing_file() -> TestResult {
+    fn test_find_lines_with_urL__from_file__when_non_existing_file() -> TestResult {
         let auditor = Auditor {};
         let non_existing_file = "non_existing_file.txt";
         let is_err = auditor
-            .get_links_from_file(non_existing_file.as_ref())
+            .find_lines_with_url(non_existing_file.as_ref())
             .is_err();
 
         assert!(is_err);
@@ -358,14 +289,14 @@ mod tests {
     }
 
     #[test]
-    fn test_dedup_links() {
+    fn test_dedup() {
         let auditor = Auditor {};
         let duplicate: Vec<String> = vec!["duplicate", "duplicate", "unique-1", "unique-2"]
             .into_iter()
             .map(String::from)
             .collect();
 
-        let actual = auditor.dedup_links(duplicate);
+        let actual = auditor.dedup(duplicate);
         let expected: Vec<String> = vec!["duplicate", "unique-1", "unique-2"]
             .into_iter()
             .map(String::from)
