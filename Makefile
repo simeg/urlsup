@@ -18,7 +18,7 @@ fmt:
 	@$(CARGO) fmt
 
 install:
-	cp ./target/release/$(BIN_NAME) /usr/local/bin/$(BIN_NAME)
+	cp -f ./target/release/$(BIN_NAME) /usr/local/bin/$(BIN_NAME)
 
 link:
 	@ln -sf ./target/debug/$(BIN_NAME) .
