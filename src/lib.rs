@@ -355,4 +355,21 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_dedup_links() {
+        let auditor = Auditor {};
+        let duplicate: Vec<String> = vec!["duplicate", "duplicate", "unique-1", "unique-2"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        let actual = auditor.dedup_links(duplicate);
+        let expected: Vec<String> = vec!["duplicate", "unique-1", "unique-2"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        assert_eq!(actual, expected)
+    }
 }
