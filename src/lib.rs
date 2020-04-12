@@ -89,31 +89,19 @@ impl Auditor {
         std::process::exit(1)
     }
 
-    fn dedup(&self, mut list: Vec<String>) -> Vec<String> {
-        list.sort();
-        list.dedup();
-        list
-    }
-
     fn find_urls(&self, paths: Vec<&Path>) -> Vec<String> {
-        let mut result = vec![];
-        for path in paths {
-            let urls: Vec<_> = self
-                .find_lines_with_url(path)
-                .unwrap_or_else(|_| {
+        paths
+            .into_iter()
+            .flat_map(|path| {
+                self.find_lines_with_url(path).unwrap_or_else(|_| {
                     panic!(
                         "Something went wrong parsing URL in file: {}",
                         path.display()
                     )
                 })
-                .into_iter()
-                .flat_map(|line| self.parse_urls(line))
-                .collect();
-
-            result.extend(urls.into_iter());
-        }
-
-        result
+            })
+            .flat_map(|line| self.parse_urls(line))
+            .collect()
     }
 
     fn find_lines_with_url(&self, path: &Path) -> Result<Vec<String>, Error> {
@@ -196,6 +184,12 @@ impl Auditor {
         }
 
         result
+    }
+
+    fn dedup(&self, mut list: Vec<String>) -> Vec<String> {
+        list.sort();
+        list.dedup();
+        list
     }
 }
 
