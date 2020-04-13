@@ -144,7 +144,7 @@ impl Auditor {
         let mut urls_and_responses = stream::iter(urls)
             .map(|url| {
                 let client = &client;
-                async move { (url.clone(), client.head(&url).send().await) }
+                async move { (url.clone(), client.get(&url).send().await) }
             })
             .buffer_unordered(num_cpus::get());
 
