@@ -17,7 +17,7 @@ include = [
 ]
 
 [dependencies]
-clap = { version = "2.31.2", default-features = false }
+clap = { version = "2.33.0", default-features = false }
 reqwest = { version = "0.10.4" }
 tokio = { version = "0.2.18", features = ["macros"] }
 futures = "0.3.1"
