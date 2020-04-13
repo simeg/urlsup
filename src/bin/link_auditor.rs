@@ -4,6 +4,7 @@ extern crate clap;
 extern crate futures;
 extern crate grep;
 extern crate linkify;
+extern crate num_cpus;
 extern crate reqwest;
 
 use clap::{App, Arg};

@@ -35,9 +35,8 @@ impl HttpStatusCode {
 const MARKDOWN_URL_PATTERN: &str =
     r#"(http://|https://)[a-z0-9]+([-.]{1}[a-z0-9]+)*.[a-z]{2,5}(:[0-9]{1,5})?(/.*)?"#;
 
-const THREAD_COUNT: usize = 50;
-
 pub struct Auditor {}
+
 pub struct AuditorOptions {}
 
 impl Auditor {
@@ -147,7 +146,7 @@ impl Auditor {
                 let client = &client;
                 async move { (url.clone(), client.head(&url).send().await) }
             })
-            .buffer_unordered(THREAD_COUNT);
+            .buffer_unordered(num_cpus::get());
 
         let mut result = vec![];
         while let Some((url, response)) = urls_and_responses.next().await {
