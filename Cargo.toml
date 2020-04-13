@@ -20,7 +20,7 @@ include = [
 clap = { version = "2.33.0", default-features = false }
 reqwest = { version = "0.10.4" }
 tokio = { version = "0.2.18", features = ["macros"] }
-futures = "0.3.1"
+futures = "0.3.4"
 grep = "0.2.4"
 linkify = "0.4.0"
 num_cpus = "1.12.0"
