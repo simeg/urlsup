@@ -61,10 +61,8 @@ impl Auditor {
             url_count
         );
 
-        let mut count = 1;
-        for url in &dedup_urls {
-            println!("{:4}. {}", count, url.to_string());
-            count += 1;
+        for (i, url) in dedup_urls.iter().enumerate() {
+            println!("{:4}. {}", i + 1, url.to_string());
         }
 
         let validation_spinner = self.spinner_start("Checking URLs...".into());
@@ -84,11 +82,9 @@ impl Auditor {
             std::process::exit(0)
         }
 
-        println!("\n> Issues");
-        let mut count = 1;
-        for (url, status_code) in non_ok_urls {
-            println!("{:4}. {} {}", count, status_code.as_u16(), url);
-            count += 1;
+        println!("\n\n> Issues");
+        for (i, (url, status_code)) in non_ok_urls.iter().enumerate() {
+            println!("{:4}. {} {}", i + 1, status_code.as_u16(), url);
         }
         std::process::exit(1)
     }
