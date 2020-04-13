@@ -6,6 +6,7 @@ extern crate grep;
 extern crate linkify;
 extern crate num_cpus;
 extern crate reqwest;
+extern crate spinners;
 
 use clap::{App, Arg};
 use link_auditor::{Auditor, AuditorOptions};

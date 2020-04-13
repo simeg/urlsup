@@ -5,6 +5,7 @@ use grep::searcher::Searcher;
 use linkify::{LinkFinder, LinkKind};
 use reqwest::redirect::Policy;
 
+use spinners::{Spinner, Spinners};
 use std::io::Error;
 use std::path::Path;
 use std::time::Duration;
@@ -41,7 +42,7 @@ pub struct AuditorOptions {}
 
 impl Auditor {
     pub async fn check(&self, paths: Vec<&Path>, _opts: AuditorOptions) {
-        println!("> Checking for URLs in {:?}", &paths);
+        let spinner_find_urls = self.spinner_start(format!("Finding URLs in files..."));
 
         // Find urls from files
         let urls = self.find_urls(paths);
@@ -52,8 +53,10 @@ impl Auditor {
         // Deduplicate urls to avoid duplicate work
         let dedup_urls = self.dedup(urls);
 
+        spinner_find_urls.stop();
+
         println!(
-            "Found {} unique URLs, {} in total",
+            "\nFound {} unique URLs, {} in total",
             &dedup_urls.len(),
             url_count
         );
@@ -64,10 +67,12 @@ impl Auditor {
             count += 1;
         }
 
-        println!("Checking URLs...");
+        let validation_spinner = self.spinner_start("Checking URLs...".into());
 
         // Query them to see if they are up
         let validation_results = self.validate_urls(dedup_urls).await;
+
+        validation_spinner.stop();
 
         let non_ok_urls: Vec<(String, HttpStatusCode)> = validation_results
             .into_iter()
@@ -189,6 +194,10 @@ impl Auditor {
         list.sort();
         list.dedup();
         list
+    }
+
+    fn spinner_start(&self, msg: String) -> Spinner {
+        Spinner::new(Spinners::Dots, msg)
     }
 }
 
