@@ -4,12 +4,13 @@ use grep::searcher::sinks::UTF8;
 use grep::searcher::Searcher;
 use linkify::{LinkFinder, LinkKind};
 use reqwest::redirect::Policy;
-
 use spinners::{Spinner, Spinners};
+
 use std::io::Error;
 use std::path::Path;
 use std::time::Duration;
 
+#[derive(Debug)]
 pub struct AuditResult {
     url: String,
     status_code: Option<u16>,
@@ -298,5 +299,46 @@ mod tests {
             .collect();
 
         assert_eq!(actual, expected)
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    #![allow(non_snake_case)]
+
+    use super::*;
+    use mockito::mock;
+
+    #[tokio::test]
+    async fn test_audit_urls__handles_url_with_status_code() {
+        let auditor = Auditor {};
+        let _m = mock("GET", "/200").with_status(200).create();
+        let endpoint = mockito::server_url() + "/200";
+
+        let audit_results = auditor.audit_urls(vec![endpoint.clone()]).await;
+
+        let actual = audit_results.first().expect("No AuditResults returned");
+
+        assert_eq!(actual.url, endpoint);
+        assert_eq!(actual.status_code, Some(200));
+        assert_eq!(actual.description, None);
+    }
+
+    #[tokio::test]
+    async fn test_audit_urls__handles_not_available_url() {
+        let auditor = Auditor {};
+        let endpoint = "https://non-existing-url.auditor".to_string();
+
+        let audit_results = auditor.audit_urls(vec![endpoint.clone()]).await;
+
+        let actual = audit_results.first().expect("No AuditResults returned");
+
+        assert_eq!(actual.url, endpoint);
+        assert_eq!(actual.status_code, None);
+        assert!(actual
+            .description
+            .as_ref()
+            .unwrap()
+            .contains("error trying to connect: dns error: failed to lookup address information:"));
     }
 }
