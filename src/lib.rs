@@ -10,26 +10,33 @@ use std::io::Error;
 use std::path::Path;
 use std::time::Duration;
 
-pub struct HttpStatusCode {
-    num: u16,
-    is_unknown: bool,
+pub struct AuditResult {
+    url: String,
+    status_code: Option<u16>,
+    description: Option<String>,
 }
 
-impl HttpStatusCode {
+impl AuditResult {
     pub fn is_ok(&self) -> bool {
-        self.num == 200
+        if let Some(num) = self.status_code {
+            num == 200
+        } else {
+            false
+        }
     }
 
     pub fn is_not_ok(&self) -> bool {
         !self.is_ok()
     }
 
-    pub fn as_u16(&self) -> u16 {
-        self.num
-    }
-
-    pub fn is_unknown(&self) -> bool {
-        self.is_unknown
+    pub fn to_string(&self) -> String {
+        if let Some(num) = &self.status_code {
+            format!("{} {}", num.to_string(), &self.url)
+        } else if let Some(desc) = &self.description {
+            format!("{} {}", &self.url, desc)
+        } else {
+            unreachable!("AuditResult should always have status_code or description")
+        }
     }
 }
 
@@ -72,9 +79,9 @@ impl Auditor {
 
         validation_spinner.stop();
 
-        let non_ok_urls: Vec<(String, HttpStatusCode)> = validation_results
+        let non_ok_urls: Vec<AuditResult> = validation_results
             .into_iter()
-            .filter(|(_url, status)| status.is_not_ok())
+            .filter(|audit_result| audit_result.is_not_ok())
             .collect();
 
         if non_ok_urls.is_empty() {
@@ -83,8 +90,8 @@ impl Auditor {
         }
 
         println!("\n\n> Issues");
-        for (i, (url, status_code)) in non_ok_urls.iter().enumerate() {
-            println!("{:4}. {} {}", i + 1, status_code.as_u16(), url);
+        for (i, audit_result) in non_ok_urls.iter().enumerate() {
+            println!("{:4}. {}", i + 1, audit_result.to_string());
         }
         std::process::exit(1)
     }
@@ -130,57 +137,45 @@ impl Auditor {
             .collect()
     }
 
-    async fn validate_urls(&self, urls: Vec<String>) -> Vec<(String, HttpStatusCode)> {
-        let timeout = Duration::from_secs(10);
+    async fn validate_urls(&self, urls: Vec<String>) -> Vec<AuditResult> {
+        let timeout = Duration::from_secs(30);
         let redirect_policy = Policy::limited(10);
         let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
         let client = reqwest::Client::builder()
+            .timeout(timeout)
             .redirect(redirect_policy)
             .user_agent(user_agent)
-            .timeout(timeout)
             .build()
             .unwrap();
 
         let mut urls_and_responses = stream::iter(urls)
             .map(|url| {
                 let client = &client;
-                async move { (url.clone(), client.get(&url).send().await) }
+                async move {
+                    let response = client.get(&url).send().await;
+                    (url.clone(), response)
+                }
             })
             .buffer_unordered(num_cpus::get());
 
         let mut result = vec![];
         while let Some((url, response)) = urls_and_responses.next().await {
-            let url_w_status_code: (String, HttpStatusCode) = match response {
-                Ok(res) => (
+            let audit_result = match response {
+                Ok(res) => AuditResult {
                     url,
-                    HttpStatusCode {
-                        is_unknown: false,
-                        num: res.status().as_u16(),
-                    },
-                ),
-                Err(e) => {
-                    if e.status().is_none() {
-                        (
-                            url,
-                            HttpStatusCode {
-                                is_unknown: true,
-                                num: 999,
-                            },
-                        )
-                    } else {
-                        (
-                            url,
-                            HttpStatusCode {
-                                is_unknown: false,
-                                num: e.status().unwrap().as_u16(),
-                            },
-                        )
-                    }
-                }
+                    status_code: Some(res.status().as_u16()),
+                    description: None,
+                },
+                Err(err) => AuditResult {
+                    url,
+                    status_code: None,
+                    description: std::error::Error::source(&err)
+                        .map_or(None, |e| Some(e.to_string())),
+                },
             };
 
-            result.push(url_w_status_code);
+            result.push(audit_result);
         }
 
         result
