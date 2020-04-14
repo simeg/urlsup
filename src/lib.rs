@@ -76,15 +76,15 @@ impl Auditor {
 
         let validation_spinner = self.spinner_start("Checking URLs...".into());
 
-        // Query them to see if they are up
-        let validation_results = self.validate_urls(dedup_urls).await;
-
-        validation_spinner.stop();
-
-        let non_ok_urls: Vec<AuditResult> = validation_results
+        // Audit urls
+        let non_ok_urls: Vec<AuditResult> = self
+            .audit_urls(dedup_urls)
+            .await
             .into_iter()
             .filter(|audit_result| audit_result.is_not_ok())
             .collect();
+
+        validation_spinner.stop();
 
         if non_ok_urls.is_empty() {
             println!("No issues!");
@@ -139,7 +139,7 @@ impl Auditor {
             .collect()
     }
 
-    async fn validate_urls(&self, urls: Vec<String>) -> Vec<AuditResult> {
+    async fn audit_urls(&self, urls: Vec<String>) -> Vec<AuditResult> {
         let timeout = Duration::from_secs(30);
         let redirect_policy = Policy::limited(10);
         let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
