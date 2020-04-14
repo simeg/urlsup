@@ -72,6 +72,8 @@ impl Auditor {
             println!("{:4}. {}", i + 1, url.to_string());
         }
 
+        println!(); // Make output more readable
+
         let validation_spinner = self.spinner_start("Checking URLs...".into());
 
         // Query them to see if they are up
