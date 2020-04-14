@@ -6,10 +6,7 @@ CARGO = $(shell which cargo)
 build:
 	@$(CARGO) build
 
-check:
-	$(CARGO) check --release
-
-ci: lint check test
+ci: lint build test
 
 clippy:
 	$(CARGO) clippy
