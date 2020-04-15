@@ -6,15 +6,36 @@ use linkify::{LinkFinder, LinkKind};
 use reqwest::redirect::Policy;
 use spinners::{Spinner, Spinners};
 
+use std::cmp::Ordering;
 use std::io::Error;
 use std::path::Path;
 use std::time::Duration;
 
-#[derive(Debug)]
+#[derive(Debug, Eq)]
 pub struct AuditResult {
     url: String,
     status_code: Option<u16>,
     description: Option<String>,
+}
+
+impl Ord for AuditResult {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.url.cmp(&other.url)
+    }
+}
+
+impl PartialOrd for AuditResult {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for AuditResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.url == other.url
+            && self.status_code == other.status_code
+            && self.description == other.description
+    }
 }
 
 impl AuditResult {
@@ -308,6 +329,9 @@ mod integration_tests {
 
     use super::*;
     use mockito::mock;
+    use std::io::Write;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     #[tokio::test]
     async fn test_audit_urls__handles_url_with_status_code() {
@@ -327,7 +351,7 @@ mod integration_tests {
     #[tokio::test]
     async fn test_audit_urls__handles_not_available_url() {
         let auditor = Auditor {};
-        let endpoint = "https://non-existing-url.auditor".to_string();
+        let endpoint = "https://localhost.auditor".to_string();
 
         let audit_results = auditor.audit_urls(vec![endpoint.clone()]).await;
 
@@ -340,5 +364,52 @@ mod integration_tests {
             .as_ref()
             .unwrap()
             .contains("error trying to connect: dns error: failed to lookup address information:"));
+    }
+
+    #[tokio::test]
+    async fn test_check__works() -> TestResult {
+        let auditor = Auditor {};
+        let _m200 = mock("GET", "/200").with_status(200).create();
+        let _m404 = mock("GET", "/404").with_status(404).create();
+        let endpoint_200 = mockito::server_url() + "/200";
+        let endpoint_404 = mockito::server_url() + "/404";
+        let endpoint_non_existing = "https://localhost.auditor".to_string();
+
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(
+            format!(
+                "arbitrary {} arbitrary [arbitrary]({}) arbitrary {}",
+                endpoint_200, endpoint_404, endpoint_non_existing
+            )
+            .as_bytes(),
+        )?;
+
+        let mut actual: Vec<AuditResult> = auditor
+            .audit_urls(vec![
+                endpoint_200.clone(),
+                endpoint_404.clone(),
+                endpoint_non_existing.clone(),
+            ])
+            .await;
+
+        actual.sort();
+
+        assert_eq!(actual[0].url, endpoint_200);
+        assert_eq!(actual[0].status_code, Some(200));
+        assert_eq!(actual[0].description, None);
+
+        assert_eq!(actual[1].url, endpoint_404);
+        assert_eq!(actual[1].status_code, Some(404));
+        assert_eq!(actual[1].description, None);
+
+        assert_eq!(actual[2].url, endpoint_non_existing);
+        assert_eq!(actual[2].status_code, None);
+        assert!(actual[2]
+            .description
+            .as_ref()
+            .unwrap()
+            .contains("error trying to connect: dns error: failed to lookup address information:"));
+
+        Ok(())
     }
 }
