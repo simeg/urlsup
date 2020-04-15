@@ -67,19 +67,31 @@ const MARKDOWN_URL_PATTERN: &str =
 
 pub struct Auditor {}
 
-pub struct AuditorOptions {}
+pub struct AuditorOptions {
+    pub white_list: Option<Vec<String>>,
+}
 
 impl Auditor {
-    pub async fn check(&self, paths: Vec<&Path>, _opts: AuditorOptions) {
+    pub async fn check(&self, paths: Vec<&Path>, opts: AuditorOptions) {
         let spinner_find_urls = self.spinner_start(format!("Finding URLs in files..."));
 
-        // Find urls from files
-        let urls = self.find_urls(paths);
+        // Find URLs from files
+        let mut urls = self.find_urls(paths);
 
-        // Save url count to avoid having to clone url list
+        // Ignore white listed URLs
+        if let Some(white_list) = opts.white_list {
+            println!("\n\nIgnoring white listed URLs");
+            for (i, url) in white_list.iter().enumerate() {
+                println!("{:4}. {}", i + 1, url.to_string());
+            }
+
+            urls = self.apply_white_list(urls, white_list);
+        }
+
+        // Save URL count to avoid having to clone URL list
         let url_count = urls.len();
 
-        // Deduplicate urls to avoid duplicate work
+        // Deduplicate URLs to avoid duplicate work
         let dedup_urls = self.dedup(urls);
 
         spinner_find_urls.stop();
@@ -109,7 +121,7 @@ impl Auditor {
         validation_spinner.stop();
 
         if non_ok_urls.is_empty() {
-            println!("No issues!");
+            println!("\n\nNo issues!");
             std::process::exit(0)
         }
 
@@ -203,6 +215,26 @@ impl Auditor {
         }
 
         result
+    }
+
+    fn apply_white_list(&self, urls: Vec<String>, white_list: Vec<String>) -> Vec<String> {
+        urls.into_iter()
+            .filter(|url| {
+                // If white list URL matches URL
+                if white_list.contains(url) {
+                    return false;
+                }
+
+                // If URL begins with white list URL
+                for white_listed_url in white_list.iter() {
+                    if url.starts_with(white_listed_url) {
+                        return false;
+                    }
+                }
+
+                true
+            })
+            .collect()
     }
 
     fn dedup(&self, mut list: Vec<String>) -> Vec<String> {
@@ -315,6 +347,33 @@ mod tests {
 
         let actual = auditor.dedup(duplicate);
         let expected: Vec<String> = vec!["duplicate", "unique-1", "unique-2"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        assert_eq!(actual, expected)
+    }
+
+    #[test]
+    fn test_apply_white_list__filters_out_white_listed_urls() {
+        let auditor = Auditor {};
+        let urls: Vec<String> = vec![
+            "http://should-keep.com",
+            "http://should-ignore.com",
+            "http://should-also-ignore.com/something/something-else",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+
+        let white_list: Vec<String> =
+            vec!["http://should-ignore.com", "http://should-also-ignore.com"]
+                .into_iter()
+                .map(String::from)
+                .collect();
+
+        let actual = auditor.apply_white_list(urls, white_list);
+        let expected: Vec<String> = vec!["http://should-keep.com"]
             .into_iter()
             .map(String::from)
             .collect();
