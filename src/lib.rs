@@ -65,10 +65,13 @@ impl AuditResult {
 const MARKDOWN_URL_PATTERN: &str =
     r#"(http://|https://)[a-z0-9]+([-.]{1}[a-z0-9]+)*.[a-z]{2,5}(:[0-9]{1,5})?(/.*)?"#;
 
+const DEFAULT_TIMEOUT: u64 = 30;
+
 pub struct Auditor {}
 
 pub struct AuditorOptions {
     pub white_list: Option<Vec<String>>,
+    pub timeout: Option<u64>,
 }
 
 impl Auditor {
@@ -79,7 +82,7 @@ impl Auditor {
         let mut urls = self.find_urls(paths);
 
         // Ignore white listed URLs
-        if let Some(white_list) = opts.white_list {
+        if let Some(white_list) = &opts.white_list {
             println!("\n\nIgnoring white listed URLs");
             for (i, url) in white_list.iter().enumerate() {
                 println!("{:4}. {}", i + 1, url.to_string());
@@ -112,7 +115,7 @@ impl Auditor {
 
         // Audit urls
         let non_ok_urls: Vec<AuditResult> = self
-            .audit_urls(dedup_urls)
+            .audit_urls(dedup_urls, &opts)
             .await
             .into_iter()
             .filter(|audit_result| audit_result.is_not_ok())
@@ -173,8 +176,8 @@ impl Auditor {
             .collect()
     }
 
-    async fn audit_urls(&self, urls: Vec<String>) -> Vec<AuditResult> {
-        let timeout = Duration::from_secs(30);
+    async fn audit_urls(&self, urls: Vec<String>, opts: &AuditorOptions) -> Vec<AuditResult> {
+        let timeout = Duration::from_secs(opts.timeout.unwrap_or(DEFAULT_TIMEOUT));
         let redirect_policy = Policy::limited(10);
         let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
@@ -217,7 +220,7 @@ impl Auditor {
         result
     }
 
-    fn apply_white_list(&self, urls: Vec<String>, white_list: Vec<String>) -> Vec<String> {
+    fn apply_white_list(&self, urls: Vec<String>, white_list: &Vec<String>) -> Vec<String> {
         urls.into_iter()
             .filter(|url| {
                 // If white list URL matches URL
@@ -372,7 +375,7 @@ mod tests {
                 .map(String::from)
                 .collect();
 
-        let actual = auditor.apply_white_list(urls, white_list);
+        let actual = auditor.apply_white_list(urls, &white_list);
         let expected: Vec<String> = vec!["http://should-keep.com"]
             .into_iter()
             .map(String::from)
@@ -395,10 +398,14 @@ mod integration_tests {
     #[tokio::test]
     async fn test_audit_urls__handles_url_with_status_code() {
         let auditor = Auditor {};
+        let opts = AuditorOptions {
+            white_list: None,
+            timeout: None,
+        };
         let _m = mock("GET", "/200").with_status(200).create();
         let endpoint = mockito::server_url() + "/200";
 
-        let audit_results = auditor.audit_urls(vec![endpoint.clone()]).await;
+        let audit_results = auditor.audit_urls(vec![endpoint.clone()], &opts).await;
 
         let actual = audit_results.first().expect("No AuditResults returned");
 
@@ -410,9 +417,13 @@ mod integration_tests {
     #[tokio::test]
     async fn test_audit_urls__handles_not_available_url() {
         let auditor = Auditor {};
+        let opts = AuditorOptions {
+            white_list: None,
+            timeout: None,
+        };
         let endpoint = "https://localhost.auditor".to_string();
 
-        let audit_results = auditor.audit_urls(vec![endpoint.clone()]).await;
+        let audit_results = auditor.audit_urls(vec![endpoint.clone()], &opts).await;
 
         let actual = audit_results.first().expect("No AuditResults returned");
 
@@ -428,6 +439,10 @@ mod integration_tests {
     #[tokio::test]
     async fn test_check__works() -> TestResult {
         let auditor = Auditor {};
+        let opts = AuditorOptions {
+            white_list: None,
+            timeout: None,
+        };
         let _m200 = mock("GET", "/200").with_status(200).create();
         let _m404 = mock("GET", "/404").with_status(404).create();
         let endpoint_200 = mockito::server_url() + "/200";
@@ -444,11 +459,14 @@ mod integration_tests {
         )?;
 
         let mut actual: Vec<AuditResult> = auditor
-            .audit_urls(vec![
-                endpoint_200.clone(),
-                endpoint_404.clone(),
-                endpoint_non_existing.clone(),
-            ])
+            .audit_urls(
+                vec![
+                    endpoint_200.clone(),
+                    endpoint_404.clone(),
+                    endpoint_non_existing.clone(),
+                ],
+                &opts,
+            )
             .await;
 
         actual.sort();
