@@ -15,6 +15,7 @@ use std::path::Path;
 static OPT_FILES: &str = "FILES";
 static OPT_WHITE_LIST: &str = "white-list";
 static OPT_TIMEOUT: &str = "timeout";
+static OPT_ALLOW: &str = "allow";
 
 #[tokio::main]
 async fn main() {
@@ -41,6 +42,14 @@ async fn main() {
         .takes_value(true)
         .required(false);
 
+    let opt_allow = Arg::with_name(OPT_ALLOW)
+        .help("Comma separated status code errors to allow")
+        .short("a")
+        .long(OPT_ALLOW)
+        .value_name("status codes")
+        .takes_value(true)
+        .required(false);
+
     let matches = App::new("link_auditor")
         .version(crate_version!())
         .author(crate_authors!())
@@ -48,12 +57,14 @@ async fn main() {
         .arg(opt_word)
         .arg(opt_white_list)
         .arg(opt_timeout)
+        .arg(opt_allow)
         .get_matches();
 
     let auditor = Auditor {};
     let mut opts = AuditorOptions {
         white_list: None,
         timeout: None,
+        allowed_status_codes: None,
     };
 
     if let Some(white_list_urls) = matches.value_of(OPT_WHITE_LIST) {
@@ -70,6 +81,16 @@ async fn main() {
             .parse()
             .expect(format!("Could not parse {} into an int (u64)", str_timeout).as_str());
         opts.timeout = Some(timeout);
+    }
+
+    if let Some(allowed_status_codes) = matches.value_of(OPT_ALLOW) {
+        let allowed: Vec<u16> = allowed_status_codes
+            .split(",")
+            .filter(|s| !s.is_empty())
+            .map(|a| a.parse::<u16>())
+            .map(|a| a.expect("Could not parse status code to int (u16)"))
+            .collect();
+        opts.allowed_status_codes = Some(allowed);
     }
 
     if let Some(files) = matches.values_of(OPT_FILES) {

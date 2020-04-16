@@ -11,7 +11,7 @@ use std::io::Error;
 use std::path::Path;
 use std::time::Duration;
 
-#[derive(Debug, Eq)]
+#[derive(Debug, Eq, Clone)]
 pub struct AuditResult {
     url: String,
     status_code: Option<u16>,
@@ -72,6 +72,7 @@ pub struct Auditor {}
 pub struct AuditorOptions {
     pub white_list: Option<Vec<String>>,
     pub timeout: Option<u64>,
+    pub allowed_status_codes: Option<Vec<u16>>,
 }
 
 impl Auditor {
@@ -89,6 +90,13 @@ impl Auditor {
             }
 
             urls = self.apply_white_list(urls, white_list);
+        }
+
+        if let Some(allowed) = &opts.allowed_status_codes {
+            println!("\n\nAllowing status codes");
+            for (i, status_code) in allowed.iter().enumerate() {
+                println!("{:4}. {}", i + 1, status_code.to_string());
+            }
         }
 
         // Save URL count to avoid having to clone URL list
@@ -114,12 +122,16 @@ impl Auditor {
         let validation_spinner = self.spinner_start("Checking URLs...".into());
 
         // Audit urls
-        let non_ok_urls: Vec<AuditResult> = self
+        let mut non_ok_urls: Vec<AuditResult> = self
             .audit_urls(dedup_urls, &opts)
             .await
             .into_iter()
             .filter(|audit_result| audit_result.is_not_ok())
             .collect();
+
+        if let Some(allowed) = &opts.allowed_status_codes {
+            non_ok_urls = self.filter_allowed_status_codes(non_ok_urls, allowed.clone());
+        }
 
         validation_spinner.stop();
 
@@ -236,6 +248,24 @@ impl Auditor {
                 }
 
                 true
+            })
+            .collect()
+    }
+
+    fn filter_allowed_status_codes(
+        &self,
+        audit_results: Vec<AuditResult>,
+        allowed_status_codes: Vec<u16>,
+    ) -> Vec<AuditResult> {
+        audit_results
+            .into_iter()
+            .filter(|ar| {
+                if let Some(status_code) = ar.status_code {
+                    if allowed_status_codes.contains(&status_code) {
+                        return false;
+                    }
+                }
+                return true;
             })
             .collect()
     }
@@ -383,6 +413,31 @@ mod tests {
 
         assert_eq!(actual, expected)
     }
+
+    #[test]
+    fn test_filter_allowed_status_codes__removes_allowed_status_codes() {
+        let auditor = Auditor {};
+        let ar1 = AuditResult {
+            url: "keep-this".to_string(),
+            status_code: Some(200),
+            description: None,
+        };
+        let ar2 = AuditResult {
+            url: "keep-this-2".to_string(),
+            status_code: None,
+            description: Some("arbirary".to_string()),
+        };
+        let ar3 = AuditResult {
+            url: "remove-this".to_string(),
+            status_code: Some(404),
+            description: None,
+        };
+        let actual = auditor
+            .filter_allowed_status_codes(vec![ar1.clone(), ar2.clone(), ar3.clone()], vec![404]);
+        let expected = vec![ar1, ar2];
+
+        assert_eq!(actual, expected)
+    }
 }
 
 #[cfg(test)]
@@ -401,6 +456,7 @@ mod integration_tests {
         let opts = AuditorOptions {
             white_list: None,
             timeout: None,
+            allowed_status_codes: None,
         };
         let _m = mock("GET", "/200").with_status(200).create();
         let endpoint = mockito::server_url() + "/200";
@@ -420,6 +476,7 @@ mod integration_tests {
         let opts = AuditorOptions {
             white_list: None,
             timeout: None,
+            allowed_status_codes: None,
         };
         let endpoint = "https://localhost.auditor".to_string();
 
@@ -442,6 +499,7 @@ mod integration_tests {
         let opts = AuditorOptions {
             white_list: None,
             timeout: None,
+            allowed_status_codes: None,
         };
         let _m200 = mock("GET", "/200").with_status(200).create();
         let _m404 = mock("GET", "/404").with_status(404).create();
