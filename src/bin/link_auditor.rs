@@ -10,6 +10,8 @@ extern crate spinners;
 
 use clap::{App, Arg};
 use link_auditor::{Auditor, AuditorOptions};
+
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
 static OPT_FILES: &str = "FILES";
@@ -21,7 +23,7 @@ static OPT_ALLOW: &str = "allow";
 async fn main() {
     let opt_word = Arg::with_name(OPT_FILES)
         .help("Files to check")
-        //        .validator_os(exists_on_filesystem)
+        .validator_os(exists_on_filesystem)
         .multiple(true)
         .required(true)
         .index(1);
@@ -100,17 +102,17 @@ async fn main() {
     }
 }
 
-//fn exists_on_filesystem(path: &OsStr) -> Result<(), OsString> {
-//    match path.to_str() {
-//        None => Err(OsString::from("Could not convert input file path -> &str")),
-//        Some(p) => {
-//            if Path::new(p).exists() {
-//                return Ok(());
-//            }
-//            Err(OsString::from(format!(
-//                "File not found [{}]",
-//                path.to_str().unwrap()
-//            )))
-//        }
-//    }
-//}
+fn exists_on_filesystem(path: &OsStr) -> Result<(), OsString> {
+    match path.to_str() {
+        None => Err(OsString::from("Could not convert input file path -> &str")),
+        Some(p) => {
+            if Path::new(p).exists() {
+                return Ok(());
+            }
+            Err(OsString::from(format!(
+                "File not found [{}]",
+                path.to_str().unwrap()
+            )))
+        }
+    }
+}
