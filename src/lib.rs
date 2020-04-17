@@ -63,7 +63,7 @@ impl AuditResult {
 }
 
 const MARKDOWN_URL_PATTERN: &str =
-    r#"(http://|https://)[a-z0-9]+([-.]{1}[a-z0-9]+)*.[a-z]{2,5}(:[0-9]{1,5})?(/.*)?"#;
+    r#"(http://|https://)[a-z0-9]+([-.]{1}[a-z0-9]+)*(.[a-z]{2,5})?(:[0-9]{1,5})?(/.*)?"#;
 
 const DEFAULT_TIMEOUT: u64 = 30;
 
