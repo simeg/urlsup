@@ -107,9 +107,16 @@ impl Auditor {
 
         spinner_find_urls.stop();
 
+        let urls_singular_plural = if &dedup_urls.len() == &(1 as usize) {
+            "URL"
+        } else {
+            "URLs"
+        };
+
         println!(
-            "\nFound {} unique URLs, {} in total",
+            "\nFound {} unique {}, {} in total",
             &dedup_urls.len(),
+            urls_singular_plural,
             url_count
         );
 
