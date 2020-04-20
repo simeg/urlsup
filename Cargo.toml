@@ -1,12 +1,12 @@
 [package]
-name = "link-auditor"
+name = "urlsup"
 version = "0.1.0"
-description = "Validate links in Markdown files"
+description = "Validate URLs in files"
 authors = ["Simon Egersand <s.egersand@gmail.com>"]
 
-repository = "https://github.com/simeg/link-auditor"
-homepage = "https://github.com/simeg/link-auditor"
-documentation = "https://github.com/simeg/link-auditor/blob/master/README.md"
+repository = "https://github.com/simeg/urlsup"
+homepage = "https://github.com/simeg/urlsup"
+documentation = "https://github.com/simeg/urlsup/blob/master/README.md"
 readme = "README.md"
 license = "MIT"
 edition = "2018"

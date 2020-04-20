@@ -10,7 +10,7 @@ mod cli {
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-    const NAME: &str = "link_auditor";
+    const NAME: &str = "urlsup";
 
     #[test]
     fn test_output__when_no_files_provided() -> TestResult {
