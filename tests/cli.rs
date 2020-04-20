@@ -35,11 +35,7 @@ mod cli {
 
         cmd.assert()
             .success()
-            .stdout(contains("Finding URLs in files..."));
-        cmd.assert()
-            .success()
             .stdout(contains("Found 1 unique URL, 1 in total"));
-        cmd.assert().success().stdout(contains("Checking URLs..."));
         cmd.assert().success().stdout(ends_with("No issues!\n"));
         Ok(())
     }
@@ -57,11 +53,7 @@ mod cli {
         cmd.assert().failure();
         cmd.assert()
             .failure()
-            .stdout(contains("Finding URLs in files..."));
-        cmd.assert()
-            .failure()
             .stdout(contains("Found 1 unique URL, 1 in total"));
-        cmd.assert().failure().stdout(contains("Checking URLs..."));
         cmd.assert()
             .failure()
             .stdout(ends_with("> Issues\n   1. 404 http://127.0.0.1:1234/404\n"));
@@ -83,11 +75,7 @@ mod cli {
         cmd.assert().failure();
         cmd.assert()
             .failure()
-            .stdout(contains("Finding URLs in files..."));
-        cmd.assert()
-            .failure()
             .stdout(contains("Found 2 unique URLs, 2 in total"));
-        cmd.assert().failure().stdout(contains("Checking URLs..."));
         cmd.assert().failure().stdout(contains("> Issues"));
         // Order is not deterministic so can't assert it
         cmd.assert()
