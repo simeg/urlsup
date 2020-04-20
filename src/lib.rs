@@ -12,25 +12,25 @@ use std::path::Path;
 use std::time::Duration;
 
 #[derive(Debug, Eq, Clone)]
-pub struct AuditResult {
+pub struct UrlUpResult {
     url: String,
     status_code: Option<u16>,
     description: Option<String>,
 }
 
-impl Ord for AuditResult {
+impl Ord for UrlUpResult {
     fn cmp(&self, other: &Self) -> Ordering {
         self.url.cmp(&other.url)
     }
 }
 
-impl PartialOrd for AuditResult {
+impl PartialOrd for UrlUpResult {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl PartialEq for AuditResult {
+impl PartialEq for UrlUpResult {
     fn eq(&self, other: &Self) -> bool {
         self.url == other.url
             && self.status_code == other.status_code
@@ -38,7 +38,7 @@ impl PartialEq for AuditResult {
     }
 }
 
-impl AuditResult {
+impl UrlUpResult {
     pub fn is_ok(&self) -> bool {
         if let Some(num) = self.status_code {
             num == 200
@@ -57,7 +57,7 @@ impl AuditResult {
         } else if let Some(desc) = &self.description {
             format!("{} {}", &self.url, desc)
         } else {
-            unreachable!("AuditResult should always have status_code or description")
+            unreachable!("UrlUpResult should always have status_code or description")
         }
     }
 }
@@ -67,16 +67,16 @@ const MARKDOWN_URL_PATTERN: &str =
 
 const DEFAULT_TIMEOUT: u64 = 30;
 
-pub struct Auditor {}
+pub struct UrlsUp {}
 
-pub struct AuditorOptions {
+pub struct UrlsUpOptions {
     pub white_list: Option<Vec<String>>,
     pub timeout: Option<u64>,
     pub allowed_status_codes: Option<Vec<u16>>,
 }
 
-impl Auditor {
-    pub async fn check(&self, paths: Vec<&Path>, opts: AuditorOptions) {
+impl UrlsUp {
+    pub async fn check(&self, paths: Vec<&Path>, opts: UrlsUpOptions) {
         let spinner_find_urls = self.spinner_start(format!("Finding URLs in files..."));
 
         // Find URLs from files
@@ -127,12 +127,12 @@ impl Auditor {
 
         let validation_spinner = self.spinner_start("Checking URLs...".into());
 
-        // Audit urls
-        let mut non_ok_urls: Vec<AuditResult> = self
-            .audit_urls(dedup_urls, &opts)
+        // Check URLs
+        let mut non_ok_urls: Vec<UrlUpResult> = self
+            .check_urls(dedup_urls, &opts)
             .await
             .into_iter()
-            .filter(|audit_result| audit_result.is_not_ok())
+            .filter(|url_up_result| url_up_result.is_not_ok())
             .collect();
 
         if let Some(allowed) = &opts.allowed_status_codes {
@@ -147,8 +147,8 @@ impl Auditor {
         }
 
         println!("\n\n> Issues");
-        for (i, audit_result) in non_ok_urls.iter().enumerate() {
-            println!("{:4}. {}", i + 1, audit_result.to_string());
+        for (i, url_up_result) in non_ok_urls.iter().enumerate() {
+            println!("{:4}. {}", i + 1, url_up_result.to_string());
         }
         std::process::exit(1)
     }
@@ -194,7 +194,7 @@ impl Auditor {
             .collect()
     }
 
-    async fn audit_urls(&self, urls: Vec<String>, opts: &AuditorOptions) -> Vec<AuditResult> {
+    async fn check_urls(&self, urls: Vec<String>, opts: &UrlsUpOptions) -> Vec<UrlUpResult> {
         let timeout = Duration::from_secs(opts.timeout.unwrap_or(DEFAULT_TIMEOUT));
         let redirect_policy = Policy::limited(10);
         let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
@@ -218,13 +218,13 @@ impl Auditor {
 
         let mut result = vec![];
         while let Some((url, response)) = urls_and_responses.next().await {
-            let audit_result = match response {
-                Ok(res) => AuditResult {
+            let url_up_result = match response {
+                Ok(res) => UrlUpResult {
                     url,
                     status_code: Some(res.status().as_u16()),
                     description: None,
                 },
-                Err(err) => AuditResult {
+                Err(err) => UrlUpResult {
                     url,
                     status_code: None,
                     description: std::error::Error::source(&err)
@@ -232,7 +232,7 @@ impl Auditor {
                 },
             };
 
-            result.push(audit_result);
+            result.push(url_up_result);
         }
 
         result
@@ -260,10 +260,10 @@ impl Auditor {
 
     fn filter_allowed_status_codes(
         &self,
-        audit_results: Vec<AuditResult>,
+        url_up_results: Vec<UrlUpResult>,
         allowed_status_codes: Vec<u16>,
-    ) -> Vec<AuditResult> {
-        audit_results
+    ) -> Vec<UrlUpResult> {
+        url_up_results
             .into_iter()
             .filter(|ar| {
                 if let Some(status_code) = ar.status_code {
@@ -298,35 +298,35 @@ mod tests {
 
     #[test]
     fn test_parse_urls() {
-        let auditor = Auditor {};
+        let urls_up = UrlsUp {};
         let md_link =
             "arbitrary [something](http://foo.bar) arbitrary http://foo2.bar arbitrary".to_string();
         let expected = vec!["http://foo.bar".to_string(), "http://foo2.bar".to_string()];
-        let actual = auditor.parse_urls(md_link);
+        let actual = urls_up.parse_urls(md_link);
         assert_eq!(actual, expected);
     }
 
     #[test]
     fn test_parse_img_url() {
-        let auditor = Auditor {};
+        let urls_up = UrlsUp {};
         let md_link = "arbitrary ![image](http://foo.bar) arbitrary".to_string();
         let expected = vec!["http://foo.bar".to_string()];
-        let actual = auditor.parse_urls(md_link);
+        let actual = urls_up.parse_urls(md_link);
         assert_eq!(actual, expected);
     }
 
     #[test]
     fn test_parse_badge_url() {
-        let auditor = Auditor {};
+        let urls_up = UrlsUp {};
         let md_link = "arbitrary [something]: http://foo.bar arbitrary".to_string();
         let expected = vec!["http://foo.bar".to_string()];
-        let actual = auditor.parse_urls(md_link);
+        let actual = urls_up.parse_urls(md_link);
         assert_eq!(actual, expected);
     }
 
     #[test]
     fn test_find_lines_with_url__from_file() -> TestResult {
-        let auditor = Auditor {};
+        let urls_up = UrlsUp {};
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(
             "arbitrary [something](http://specific-link.one) arbitrary\n\
@@ -336,7 +336,7 @@ mod tests {
                 .as_bytes(),
         )?;
 
-        let actual = auditor.find_lines_with_url(file.path()).unwrap();
+        let actual = urls_up.find_lines_with_url(file.path()).unwrap();
 
         let actual_line1 = &actual.get(0).unwrap().as_str().to_owned();
         let actual_line2 = &actual.get(1).unwrap().as_str().to_owned();
@@ -365,9 +365,9 @@ mod tests {
 
     #[test]
     fn test_find_lines_with_urL__from_file__when_non_existing_file() -> TestResult {
-        let auditor = Auditor {};
+        let urls_up = UrlsUp {};
         let non_existing_file = "non_existing_file.txt";
-        let is_err = auditor
+        let is_err = urls_up
             .find_lines_with_url(non_existing_file.as_ref())
             .is_err();
 
@@ -378,13 +378,13 @@ mod tests {
 
     #[test]
     fn test_dedup() {
-        let auditor = Auditor {};
+        let urls_up = UrlsUp {};
         let duplicate: Vec<String> = vec!["duplicate", "duplicate", "unique-1", "unique-2"]
             .into_iter()
             .map(String::from)
             .collect();
 
-        let actual = auditor.dedup(duplicate);
+        let actual = urls_up.dedup(duplicate);
         let expected: Vec<String> = vec!["duplicate", "unique-1", "unique-2"]
             .into_iter()
             .map(String::from)
@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn test_apply_white_list__filters_out_white_listed_urls() {
-        let auditor = Auditor {};
+        let urls_up = UrlsUp {};
         let urls: Vec<String> = vec![
             "http://should-keep.com",
             "http://should-ignore.com",
@@ -411,7 +411,7 @@ mod tests {
                 .map(String::from)
                 .collect();
 
-        let actual = auditor.apply_white_list(urls, &white_list);
+        let actual = urls_up.apply_white_list(urls, &white_list);
         let expected: Vec<String> = vec!["http://should-keep.com"]
             .into_iter()
             .map(String::from)
@@ -422,23 +422,23 @@ mod tests {
 
     #[test]
     fn test_filter_allowed_status_codes__removes_allowed_status_codes() {
-        let auditor = Auditor {};
-        let ar1 = AuditResult {
+        let urls_up = UrlsUp {};
+        let ar1 = UrlUpResult {
             url: "keep-this".to_string(),
             status_code: Some(200),
             description: None,
         };
-        let ar2 = AuditResult {
+        let ar2 = UrlUpResult {
             url: "keep-this-2".to_string(),
             status_code: None,
             description: Some("arbirary".to_string()),
         };
-        let ar3 = AuditResult {
+        let ar3 = UrlUpResult {
             url: "remove-this".to_string(),
             status_code: Some(404),
             description: None,
         };
-        let actual = auditor
+        let actual = urls_up
             .filter_allowed_status_codes(vec![ar1.clone(), ar2.clone(), ar3.clone()], vec![404]);
         let expected = vec![ar1, ar2];
 
@@ -457,9 +457,9 @@ mod integration_tests {
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     #[tokio::test]
-    async fn test_audit_urls__handles_url_with_status_code() {
-        let auditor = Auditor {};
-        let opts = AuditorOptions {
+    async fn test_check_urls__handles_url_with_status_code() {
+        let urls_up = UrlsUp {};
+        let opts = UrlsUpOptions {
             white_list: None,
             timeout: None,
             allowed_status_codes: None,
@@ -467,9 +467,9 @@ mod integration_tests {
         let _m = mock("GET", "/200").with_status(200).create();
         let endpoint = mockito::server_url() + "/200";
 
-        let audit_results = auditor.audit_urls(vec![endpoint.clone()], &opts).await;
+        let results = urls_up.check_urls(vec![endpoint.clone()], &opts).await;
 
-        let actual = audit_results.first().expect("No AuditResults returned");
+        let actual = results.first().expect("No UrlUpResults returned");
 
         assert_eq!(actual.url, endpoint);
         assert_eq!(actual.status_code, Some(200));
@@ -477,18 +477,18 @@ mod integration_tests {
     }
 
     #[tokio::test]
-    async fn test_audit_urls__handles_not_available_url() {
-        let auditor = Auditor {};
-        let opts = AuditorOptions {
+    async fn test_check_urls__handles_not_available_url() {
+        let urls_up = UrlsUp {};
+        let opts = UrlsUpOptions {
             white_list: None,
             timeout: None,
             allowed_status_codes: None,
         };
-        let endpoint = "https://localhost.auditor".to_string();
+        let endpoint = "https://localhost.urls_up".to_string();
 
-        let audit_results = auditor.audit_urls(vec![endpoint.clone()], &opts).await;
+        let results = urls_up.check_urls(vec![endpoint.clone()], &opts).await;
 
-        let actual = audit_results.first().expect("No AuditResults returned");
+        let actual = results.first().expect("No UrlUpResults returned");
 
         assert_eq!(actual.url, endpoint);
         assert_eq!(actual.status_code, None);
@@ -501,8 +501,8 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_check__works() -> TestResult {
-        let auditor = Auditor {};
-        let opts = AuditorOptions {
+        let urls_up = UrlsUp {};
+        let opts = UrlsUpOptions {
             white_list: None,
             timeout: None,
             allowed_status_codes: None,
@@ -511,7 +511,7 @@ mod integration_tests {
         let _m404 = mock("GET", "/404").with_status(404).create();
         let endpoint_200 = mockito::server_url() + "/200";
         let endpoint_404 = mockito::server_url() + "/404";
-        let endpoint_non_existing = "https://localhost.auditor".to_string();
+        let endpoint_non_existing = "https://localhost.urls_up".to_string();
 
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(
@@ -522,8 +522,8 @@ mod integration_tests {
             .as_bytes(),
         )?;
 
-        let mut actual: Vec<AuditResult> = auditor
-            .audit_urls(
+        let mut actual: Vec<UrlUpResult> = urls_up
+            .check_urls(
                 vec![
                     endpoint_200.clone(),
                     endpoint_404.clone(),

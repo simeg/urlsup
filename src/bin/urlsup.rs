@@ -1,4 +1,4 @@
-extern crate link_auditor;
+extern crate urlsup;
 #[macro_use]
 extern crate clap;
 extern crate futures;
@@ -9,7 +9,7 @@ extern crate reqwest;
 extern crate spinners;
 
 use clap::{App, Arg};
-use link_auditor::{Auditor, AuditorOptions};
+use urlsup::{UrlsUp, UrlsUpOptions};
 
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
@@ -52,7 +52,7 @@ async fn main() {
         .takes_value(true)
         .required(false);
 
-    let matches = App::new("link_auditor")
+    let matches = App::new("urls_up")
         .version(crate_version!())
         .author(crate_authors!())
         .about(crate_description!())
@@ -62,8 +62,8 @@ async fn main() {
         .arg(opt_allow)
         .get_matches();
 
-    let auditor = Auditor {};
-    let mut opts = AuditorOptions {
+    let urls_up = UrlsUp {};
+    let mut opts = UrlsUpOptions {
         white_list: None,
         timeout: None,
         allowed_status_codes: None,
@@ -98,7 +98,7 @@ async fn main() {
     if let Some(files) = matches.values_of(OPT_FILES) {
         let paths: Vec<&Path> = files.map(Path::new).collect::<Vec<&Path>>();
 
-        auditor.check(paths, opts).await;
+        urls_up.check(paths, opts).await;
     }
 }
 

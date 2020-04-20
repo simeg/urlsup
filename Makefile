@@ -1,6 +1,6 @@
 .PHONY: check ci clippy fmt install lint publish release test
 
-BIN_NAME = link_auditor
+BIN_NAME = urlsup
 CARGO = $(shell which cargo)
 
 build:
