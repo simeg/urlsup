@@ -7,6 +7,7 @@ extern crate linkify;
 extern crate num_cpus;
 extern crate reqwest;
 extern crate spinners;
+extern crate term;
 
 use clap::{App, Arg};
 use urlsup::{UrlsUp, UrlsUpOptions};

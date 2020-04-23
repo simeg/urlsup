@@ -105,7 +105,9 @@ impl UrlsUp {
         // Deduplicate URLs to avoid duplicate work
         let dedup_urls = self.dedup(urls);
 
-        spinner_find_urls.stop();
+        if let Some(sp) = spinner_find_urls {
+            sp.stop();
+        }
 
         let urls_singular_plural = match &dedup_urls.len() {
             1 => "URL",
@@ -139,7 +141,9 @@ impl UrlsUp {
             non_ok_urls = self.filter_allowed_status_codes(non_ok_urls, allowed.clone());
         }
 
-        validation_spinner.stop();
+        if let Some(sp) = validation_spinner {
+            sp.stop();
+        }
 
         if non_ok_urls.is_empty() {
             println!("\n\nNo issues!");
@@ -265,13 +269,14 @@ impl UrlsUp {
     ) -> Vec<UrlUpResult> {
         url_up_results
             .into_iter()
-            .filter(|ar| {
-                if let Some(status_code) = ar.status_code {
+            .filter(|uur| {
+                if let Some(status_code) = uur.status_code {
                     if allowed_status_codes.contains(&status_code) {
                         return false;
                     }
                 }
-                return true;
+
+                true
             })
             .collect()
     }
@@ -282,8 +287,13 @@ impl UrlsUp {
         list
     }
 
-    fn spinner_start(&self, msg: String) -> Spinner {
-        Spinner::new(Spinners::Dots, msg)
+    fn spinner_start(&self, msg: String) -> Option<Spinner> {
+        if term::stdout().is_some() {
+            Some(Spinner::new(Spinners::Dots, msg))
+        } else {
+            println!("{}", msg);
+            None
+        }
     }
 }
 
