@@ -6,6 +6,7 @@ use linkify::{LinkFinder, LinkKind};
 use reqwest::redirect::Policy;
 use spinners::{Spinner, Spinners};
 
+use core::fmt;
 use std::cmp::Ordering;
 use std::io::Error;
 use std::path::Path;
@@ -50,12 +51,14 @@ impl UrlUpResult {
     pub fn is_not_ok(&self) -> bool {
         !self.is_ok()
     }
+}
 
-    pub fn to_string(&self) -> String {
+impl fmt::Display for UrlUpResult {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if let Some(num) = &self.status_code {
-            format!("{} {}", num.to_string(), &self.url)
+            write!(f, "{} {}", num.to_string(), &self.url)
         } else if let Some(desc) = &self.description {
-            format!("{} {}", &self.url, desc)
+            write!(f, "{} {}", &self.url, desc)
         } else {
             unreachable!("UrlUpResult should always have status_code or description")
         }
@@ -82,7 +85,7 @@ pub struct UrlsUpOptions {
 
 impl UrlsUp {
     pub async fn check(&self, paths: Vec<&Path>, opts: UrlsUpOptions) {
-        let spinner_find_urls = self.spinner_start(format!("Finding URLs in files..."));
+        let spinner_find_urls = self.spinner_start("Finding URLs in files...".to_string());
 
         // Find URLs from files
         let mut urls = self.find_urls(paths);
@@ -236,8 +239,7 @@ impl UrlsUp {
                 Err(err) => UrlUpResult {
                     url,
                     status_code: None,
-                    description: std::error::Error::source(&err)
-                        .map_or(None, |e| Some(e.to_string())),
+                    description: std::error::Error::source(&err).map(|e| e.to_string()),
                 },
             };
 
@@ -247,7 +249,7 @@ impl UrlsUp {
         result
     }
 
-    fn apply_white_list(&self, urls: Vec<String>, white_list: &Vec<String>) -> Vec<String> {
+    fn apply_white_list(&self, urls: Vec<String>, white_list: &[String]) -> Vec<String> {
         urls.into_iter()
             .filter(|url| {
                 // If white list URL matches URL

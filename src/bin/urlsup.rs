@@ -82,7 +82,7 @@ async fn main() {
 
     if let Some(white_list_urls) = matches.value_of(OPT_WHITE_LIST) {
         let white_list: Vec<String> = white_list_urls
-            .split(",")
+            .split(',')
             .map(String::from)
             .filter(|s| !s.is_empty())
             .collect();
@@ -92,13 +92,13 @@ async fn main() {
     if let Some(str_timeout) = matches.value_of(OPT_TIMEOUT) {
         let timeout: u64 = str_timeout
             .parse()
-            .expect(format!("Could not parse {} into an int (u64)", str_timeout).as_str());
+            .unwrap_or_else(|_| panic!("Could not parse {} into an int (u64)", str_timeout));
         opts.timeout = Some(timeout);
     }
 
     if let Some(allowed_status_codes) = matches.value_of(OPT_ALLOW) {
         let allowed: Vec<u16> = allowed_status_codes
-            .split(",")
+            .split(',')
             .filter(|s| !s.is_empty())
             .map(|a| a.parse::<u16>())
             .map(|a| a.expect("Could not parse status code to int (u16)"))
@@ -109,7 +109,7 @@ async fn main() {
     if let Some(thread_count) = matches.value_of(OPT_THREADS) {
         opts.thread_count = thread_count
             .parse::<usize>()
-            .expect(format!("Could not parse {} into an int (usize)", thread_count).as_str());
+            .unwrap_or_else(|_| panic!("Could not parse {} into an int (usize)", thread_count));
     }
 
     if let Some(files) = matches.values_of(OPT_FILES) {
