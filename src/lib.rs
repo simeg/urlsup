@@ -532,6 +532,40 @@ mod tests {
 
         assert_eq!(actual, expected)
     }
+
+    #[test]
+    fn test_urls_up_result__is_ok() {
+        let uup = UrlUpResult {
+            url: "irrelevant".to_string(),
+            status_code: Some(200),
+            description: None,
+        };
+
+        assert!(uup.is_ok());
+        assert!(!uup.is_not_ok());
+    }
+
+    #[test]
+    fn test_urls_up_result__to_string() {
+        let uup_200 = UrlUpResult {
+            url: "http://some-domain.com".to_string(),
+            status_code: Some(200),
+            description: Some("should ignore this".to_string()),
+        };
+
+        assert_eq!(uup_200.to_string(), "200 http://some-domain.com");
+
+        let uup_description = UrlUpResult {
+            url: "http://some-domain.com".to_string(),
+            status_code: None,
+            description: Some("some-description".to_string()),
+        };
+
+        assert_eq!(
+            uup_description.to_string(),
+            "http://some-domain.com some-description"
+        );
+    }
 }
 
 #[cfg(test)]
