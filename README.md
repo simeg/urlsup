@@ -1,4 +1,4 @@
-# urlsup
+# urlsup [![Build Status][build_badge]][build_status] [![Code Coverage][coverage_badge]][coverage_report]
 
 `urlsup` (_urls up_) finds URLs in files and checks whether they are up by making a `GET` request and checking the response status code. This tool is useful for lists, repos or any type of project containing URLs that you want to be up.
 
@@ -88,3 +88,8 @@ This repo uses a Makefile as an interface for common operations.
    of the project
 3) Run `./urlsup` to execute the binary with your changes
 4) Profit :star:
+
+[build_badge]: https://travis-ci.org/simeg/urlsup.svg?branch=master
+[build_status]: https://travis-ci.org/simeg/urlsup
+[coverage_badge]: https://codecov.io/gh/simeg/urlsup/branch/master/graph/badge.svg
+[coverage_report]: https://codecov.io/gh/simeg/urlsup/branch/master
