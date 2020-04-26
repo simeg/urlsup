@@ -70,9 +70,14 @@ const DEFAULT_TIMEOUT: u64 = 30;
 pub struct UrlsUp {}
 
 pub struct UrlsUpOptions {
+    // White listed URLs to allow being broken
     pub white_list: Option<Vec<String>>,
+    // Timeout for getting a response
     pub timeout: Option<u64>,
+    // Status codes to allow being present
     pub allowed_status_codes: Option<Vec<u16>>,
+    // Thread count
+    pub thread_count: usize,
 }
 
 impl UrlsUp {
@@ -218,7 +223,7 @@ impl UrlsUp {
                     (url.clone(), response)
                 }
             })
-            .buffer_unordered(num_cpus::get());
+            .buffer_unordered(opts.thread_count);
 
         let mut result = vec![];
         while let Some((url, response)) = urls_and_responses.next().await {
@@ -473,6 +478,7 @@ mod integration_tests {
             white_list: None,
             timeout: None,
             allowed_status_codes: None,
+            thread_count: 1,
         };
         let _m = mock("GET", "/200").with_status(200).create();
         let endpoint = mockito::server_url() + "/200";
@@ -493,6 +499,7 @@ mod integration_tests {
             white_list: None,
             timeout: None,
             allowed_status_codes: None,
+            thread_count: 1,
         };
         let endpoint = "https://localhost.urls_up".to_string();
 
@@ -516,6 +523,7 @@ mod integration_tests {
             white_list: None,
             timeout: None,
             allowed_status_codes: None,
+            thread_count: 1,
         };
         let _m200 = mock("GET", "/200").with_status(200).create();
         let _m404 = mock("GET", "/404").with_status(404).create();

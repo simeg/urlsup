@@ -19,6 +19,7 @@ static OPT_FILES: &str = "FILES";
 static OPT_WHITE_LIST: &str = "white-list";
 static OPT_TIMEOUT: &str = "timeout";
 static OPT_ALLOW: &str = "allow";
+static OPT_THREADS: &str = "threads";
 
 #[tokio::main]
 async fn main() {
@@ -53,6 +54,13 @@ async fn main() {
         .takes_value(true)
         .required(false);
 
+    let opt_threads = Arg::with_name(OPT_THREADS)
+        .help("Thread count for making requests (default: CPU core count)")
+        .long(OPT_THREADS)
+        .value_name("thread count")
+        .takes_value(true)
+        .required(false);
+
     let matches = App::new("urls_up")
         .version(crate_version!())
         .author(crate_authors!())
@@ -61,6 +69,7 @@ async fn main() {
         .arg(opt_white_list)
         .arg(opt_timeout)
         .arg(opt_allow)
+        .arg(opt_threads)
         .get_matches();
 
     let urls_up = UrlsUp {};
@@ -68,6 +77,7 @@ async fn main() {
         white_list: None,
         timeout: None,
         allowed_status_codes: None,
+        thread_count: num_cpus::get(),
     };
 
     if let Some(white_list_urls) = matches.value_of(OPT_WHITE_LIST) {
@@ -94,6 +104,12 @@ async fn main() {
             .map(|a| a.expect("Could not parse status code to int (u16)"))
             .collect();
         opts.allowed_status_codes = Some(allowed);
+    }
+
+    if let Some(thread_count) = matches.value_of(OPT_THREADS) {
+        opts.thread_count = thread_count
+            .parse::<usize>()
+            .expect(format!("Could not parse {} into an int (usize)", thread_count).as_str());
     }
 
     if let Some(files) = matches.values_of(OPT_FILES) {
