@@ -132,7 +132,13 @@ async fn main() {
     if let Some(files) = matches.values_of(OPT_FILES) {
         let paths: Vec<&Path> = files.map(Path::new).collect::<Vec<&Path>>();
 
-        urls_up.check(paths, opts).await;
+        let result = urls_up.check(paths, opts).await;
+
+        if result.has_issues {
+            std::process::exit(1)
+        } else {
+            std::process::exit(0)
+        }
     }
 }
 
