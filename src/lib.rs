@@ -73,12 +73,14 @@ pub struct UrlsUp {}
 pub struct UrlsUpOptions {
     // White listed URLs to allow being broken
     pub white_list: Option<Vec<String>>,
-    // Timeout in seconds for getting a response
+    // Timeout for getting a response
     pub timeout: Duration,
     // Status codes to allow being present
     pub allowed_status_codes: Option<Vec<u16>>,
     // Thread count
     pub thread_count: usize,
+    // Allow URLs to time out
+    pub allow_timeout: bool,
 }
 
 impl UrlsUp {
@@ -86,6 +88,7 @@ impl UrlsUp {
         // Print options
         println!("> Using threads: {}", &opts.thread_count);
         println!("> Using timeout: {}", &opts.timeout.as_secs());
+        println!("> Allow timeout: {}", &opts.allow_timeout);
 
         if let Some(white_list) = &opts.white_list {
             println!("> Ignoring white listed URLs");
@@ -167,6 +170,10 @@ impl UrlsUp {
 
         if let Some(allowed) = &opts.allowed_status_codes {
             non_ok_urls = self.filter_allowed_status_codes(non_ok_urls, allowed.clone());
+        }
+
+        if opts.allow_timeout {
+            non_ok_urls = self.filter_timeouts(non_ok_urls);
         }
 
         if let Some(sp) = validation_spinner {
@@ -298,6 +305,21 @@ impl UrlsUp {
             .filter(|uur| {
                 if let Some(status_code) = uur.status_code {
                     if allowed_status_codes.contains(&status_code) {
+                        return false;
+                    }
+                }
+
+                true
+            })
+            .collect()
+    }
+
+    fn filter_timeouts(&self, url_up_results: Vec<UrlUpResult>) -> Vec<UrlUpResult> {
+        url_up_results
+            .into_iter()
+            .filter(|uur| {
+                if let Some(description) = &uur.description {
+                    if description == "operation timed out" {
                         return false;
                     }
                 }
@@ -467,7 +489,7 @@ mod tests {
         let ar2 = UrlUpResult {
             url: "keep-this-2".to_string(),
             status_code: None,
-            description: Some("arbirary".to_string()),
+            description: Some("arbitrary".to_string()),
         };
         let ar3 = UrlUpResult {
             url: "remove-this".to_string(),
@@ -476,6 +498,30 @@ mod tests {
         };
         let actual = urls_up
             .filter_allowed_status_codes(vec![ar1.clone(), ar2.clone(), ar3.clone()], vec![404]);
+        let expected = vec![ar1, ar2];
+
+        assert_eq!(actual, expected)
+    }
+
+    #[test]
+    fn test_filter_filter_timeouts__removes_timeouts() {
+        let urls_up = UrlsUp {};
+        let ar1 = UrlUpResult {
+            url: "keep-this".to_string(),
+            status_code: Some(200),
+            description: None,
+        };
+        let ar2 = UrlUpResult {
+            url: "keep-this-2".to_string(),
+            status_code: None,
+            description: Some("arbitrary".to_string()),
+        };
+        let ar3 = UrlUpResult {
+            url: "remove-this".to_string(),
+            status_code: None,
+            description: Some("operation timed out".to_string()),
+        };
+        let actual = urls_up.filter_timeouts(vec![ar1.clone(), ar2.clone(), ar3.clone()]);
         let expected = vec![ar1, ar2];
 
         assert_eq!(actual, expected)
@@ -500,12 +546,12 @@ mod integration_tests {
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
+            allow_timeout: false,
         };
         let _m = mock("GET", "/200").with_status(200).create();
         let endpoint = mockito::server_url() + "/200";
 
         let results = urls_up.check_urls(vec![endpoint.clone()], &opts).await;
-
         let actual = results.first().expect("No UrlUpResults returned");
 
         assert_eq!(actual.url, endpoint);
@@ -521,11 +567,11 @@ mod integration_tests {
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
+            allow_timeout: false,
         };
         let endpoint = "https://localhost.urls_up".to_string();
 
         let results = urls_up.check_urls(vec![endpoint.clone()], &opts).await;
-
         let actual = results.first().expect("No UrlUpResults returned");
 
         assert_eq!(actual.url, endpoint);
@@ -545,6 +591,7 @@ mod integration_tests {
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
+            allow_timeout: false,
         };
         let _m200 = mock("GET", "/200").with_status(200).create();
         let _m404 = mock("GET", "/404").with_status(404).create();
@@ -572,7 +619,7 @@ mod integration_tests {
             )
             .await;
 
-        actual.sort();
+        actual.sort(); // Sort to be able to assert deterministically
 
         assert_eq!(actual[0].url, endpoint_200);
         assert_eq!(actual[0].status_code, Some(200));

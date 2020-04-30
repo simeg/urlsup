@@ -21,6 +21,7 @@ static OPT_WHITE_LIST: &str = "white-list";
 static OPT_TIMEOUT: &str = "timeout";
 static OPT_ALLOW: &str = "allow";
 static OPT_THREADS: &str = "threads";
+static OPT_ALLOW_TIMEOUT: &str = "allow-timeout";
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -64,6 +65,12 @@ async fn main() {
         .takes_value(true)
         .required(false);
 
+    let opt_allow_timeout = Arg::with_name(OPT_ALLOW_TIMEOUT)
+        .help("URLs that time out are allowed")
+        .long(OPT_ALLOW_TIMEOUT)
+        .takes_value(false)
+        .required(false);
+
     let matches = App::new("urls_up")
         .version(crate_version!())
         .author(crate_authors!())
@@ -73,6 +80,7 @@ async fn main() {
         .arg(opt_timeout)
         .arg(opt_allow)
         .arg(opt_threads)
+        .arg(opt_allow_timeout)
         .get_matches();
 
     let urls_up = UrlsUp {};
@@ -81,6 +89,7 @@ async fn main() {
         timeout: DEFAULT_TIMEOUT,
         allowed_status_codes: None,
         thread_count: num_cpus::get(),
+        allow_timeout: false,
     };
 
     if let Some(white_list_urls) = matches.value_of(OPT_WHITE_LIST) {
@@ -114,6 +123,10 @@ async fn main() {
         opts.thread_count = thread_count
             .parse::<usize>()
             .unwrap_or_else(|_| panic!("Could not parse {} into an int (usize)", thread_count));
+    }
+
+    if matches.is_present(OPT_ALLOW_TIMEOUT) {
+        opts.allow_timeout = true;
     }
 
     if let Some(files) = matches.values_of(OPT_FILES) {
