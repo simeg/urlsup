@@ -25,8 +25,15 @@ ARGS:
 ## Examples
 ```bash
 $ urlsup `find . -name "*.md"`
+> Using threads: 8
+> Using timeout (seconds): 30
+> Allow timeout: false
+> Will check URLs in 1 file
+   1. ./README.md
+
 ⠹ Finding URLs in files...
-Found 2 unique URLs, 3 in total
+
+> Found 2 unique URLs, 3 in total
    1. https://httpstat.us/401
    2. https://httpstat.us/404
 
@@ -35,44 +42,41 @@ Found 2 unique URLs, 3 in total
 > Issues
    1. 401 https://httpstat.us/401
    2. 404 https://httpstat.us/404
-
-$ echo $?
-1
 ```
 
 ```bash
 $ urlsup `find . -name "*.md"`
+> Using threads: 8
+> Using timeout (seconds): 30
+> Allow timeout: false
+> Will check URLs in 1 file
+   1. ./README.md
+
 ⠹ Finding URLs in files...
-Found 1 unique URLs, 1 in total
+
+> Found 1 unique URL, 1 in total
    1. https://httpstat.us/200
 
 ⠏ Checking URLs...
 
-No issues!
-
-$ echo $?
-0
+> No issues!
 ```
 
-**Allow 404 status code**
 ```bash
-$ urlsup `find . -name "*.md"` --allow 404
-⠹ Finding URLs in files...
+$ urlsup README.md --white-list rust,crates
+# white list all links starting with rust or crates
 
-Allowing status codes
-   1. 404
+$ urlsup README.md,README-zh.md
+# check links in 2 files
 
-Found 2 unique URLs, 2 in total
-   1. https://httpstat.us/401
-   2. https://httpstat.us/404
+$ urlsup docs/*.md
+# check all markdown files in docs/ directory
 
-⠏ Checking URLs...
+$ urlsup README.md --allow-timeout -t 5
+# speed up validation by setting a timeout of 5 seconds per link request and allowing timeouts
 
-> Issues
-   1. 401 https://httpstat.us/401
-
-$ echo $?
-1
+$ urlsup README.md --allow 403,429
+# allow status code errors 403 and 429
 ```
 
 ## Development
