@@ -91,5 +91,5 @@ This repo uses a Makefile as an interface for common operations.
 
 [build_badge]: https://travis-ci.org/simeg/urlsup.svg?branch=master
 [build_status]: https://travis-ci.org/simeg/urlsup
-[coverage_badge]: https://codecov.io/gh/simeg/urlsup/branch/master/graph/badge.svg
+[coverage_badge]: https://codecov.io/gh/simeg/urlsup/branch/master/graph/badge.svg?token=2bsQKkD1zg
 [coverage_report]: https://codecov.io/gh/simeg/urlsup/branch/master
