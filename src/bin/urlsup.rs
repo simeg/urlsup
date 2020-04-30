@@ -43,7 +43,7 @@ async fn main() {
         .required(false);
 
     let opt_timeout = Arg::with_name(OPT_TIMEOUT)
-        .help("Connection timeout (default: 30)")
+        .help("Connection timeout in seconds (default: 30)")
         .short("t")
         .long(OPT_TIMEOUT)
         .value_name("seconds")

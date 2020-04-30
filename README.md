@@ -15,7 +15,7 @@ FLAGS:
 OPTIONS:
     -a, --allow <status codes>      Comma separated status code errors to allow
         --threads <thread count>    Thread count for making requests (default: CPU core count)
-    -t, --timeout <seconds>         Connection timeout (default: 30)
+    -t, --timeout <seconds>         Connection timeout in seconds (default: 30)
     -w, --white-list <urls>         Comma separated URLs to white list
 
 ARGS:
