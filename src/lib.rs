@@ -87,7 +87,7 @@ impl UrlsUp {
     pub async fn check(&self, paths: Vec<&Path>, opts: UrlsUpOptions) {
         // Print options
         println!("> Using threads: {}", &opts.thread_count);
-        println!("> Using timeout: {}", &opts.timeout.as_secs());
+        println!("> Using timeout (seconds): {}", &opts.timeout.as_secs());
         println!("> Allow timeout: {}", &opts.allow_timeout);
 
         if let Some(white_list) = &opts.white_list {
