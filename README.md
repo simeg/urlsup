@@ -9,6 +9,9 @@ It's written in Rust and executes the requests async in multiple threads, making
 USAGE:
     urlsup [OPTIONS] <FILES>...
 
+FLAGS:
+        --allow-timeout             URLs that time out are allowed
+
 OPTIONS:
     -a, --allow <status codes>      Comma separated status code errors to allow
         --threads <thread count>    Thread count for making requests (default: CPU core count)

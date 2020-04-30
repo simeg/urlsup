@@ -187,11 +187,12 @@ mod cli {
             .arg("--allow")
             .arg("200,404")
             .arg("--white-list")
-            .arg("http://some-url.com");
+            .arg("http://some-url.com")
+            .arg("--allow-timeout");
 
         cmd.assert()
             .success()
-            .stdout(starts_with("> Using threads: 10\n> Using timeout: 20\n> Ignoring white listed URLs\n   1. http://some-url.com\n> Allowing status codes\n   1. 200\n   2. 404"));
+            .stdout(starts_with("> Using threads: 10\n> Using timeout: 20\n> Allow timeout: true\n> Ignoring white listed URLs\n   1. http://some-url.com\n> Allowing status codes\n   1. 200\n   2. 404"));
         Ok(())
     }
 }
