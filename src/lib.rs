@@ -101,7 +101,16 @@ impl UrlsUp {
             }
         }
 
-        println!("> Will check URLs in {} files", paths.len());
+        let files_singular_plural = match &paths.len() {
+            1 => "file",
+            _ => "files",
+        };
+
+        println!(
+            "> Will check URLs in {} {}",
+            paths.len(),
+            files_singular_plural
+        );
         for (i, file) in paths.iter().enumerate() {
             println!("{:4}. {}", i + 1, file.display());
         }
