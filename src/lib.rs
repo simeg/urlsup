@@ -83,8 +83,13 @@ pub struct UrlsUpOptions {
     pub allow_timeout: bool,
 }
 
+pub struct UrlsUpResult {
+    // If any issues were found
+    pub has_issues: bool,
+}
+
 impl UrlsUp {
-    pub async fn check(&self, paths: Vec<&Path>, opts: UrlsUpOptions) {
+    pub async fn check(&self, paths: Vec<&Path>, opts: UrlsUpOptions) -> UrlsUpResult {
         // Print options
         println!("> Using threads: {}", &opts.thread_count);
         println!("> Using timeout (seconds): {}", &opts.timeout.as_secs());
@@ -182,14 +187,15 @@ impl UrlsUp {
 
         if non_ok_urls.is_empty() {
             println!("\n\n> No issues!");
-            std::process::exit(0)
+            return UrlsUpResult { has_issues: false };
         }
 
         println!("\n\n> Issues");
         for (i, url_up_result) in non_ok_urls.iter().enumerate() {
             println!("{:4}. {}", i + 1, url_up_result.to_string());
         }
-        std::process::exit(1)
+
+        UrlsUpResult { has_issues: true }
     }
 
     fn find_urls(&self, paths: Vec<&Path>) -> Vec<String> {
