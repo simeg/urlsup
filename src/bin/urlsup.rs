@@ -14,12 +14,15 @@ use urlsup::{UrlsUp, UrlsUpOptions};
 
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
+use std::time::Duration;
 
 static OPT_FILES: &str = "FILES";
 static OPT_WHITE_LIST: &str = "white-list";
 static OPT_TIMEOUT: &str = "timeout";
 static OPT_ALLOW: &str = "allow";
 static OPT_THREADS: &str = "threads";
+
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[tokio::main]
 async fn main() {
@@ -75,7 +78,7 @@ async fn main() {
     let urls_up = UrlsUp {};
     let mut opts = UrlsUpOptions {
         white_list: None,
-        timeout: None,
+        timeout: DEFAULT_TIMEOUT,
         allowed_status_codes: None,
         thread_count: num_cpus::get(),
     };
@@ -90,10 +93,11 @@ async fn main() {
     }
 
     if let Some(str_timeout) = matches.value_of(OPT_TIMEOUT) {
-        let timeout: u64 = str_timeout
+        let timeout: Duration = str_timeout
             .parse()
+            .map(Duration::from_secs)
             .unwrap_or_else(|_| panic!("Could not parse {} into an int (u64)", str_timeout));
-        opts.timeout = Some(timeout);
+        opts.timeout = timeout;
     }
 
     if let Some(allowed_status_codes) = matches.value_of(OPT_ALLOW) {

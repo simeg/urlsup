@@ -3,7 +3,7 @@ mod cli {
 
     use assert_cmd::prelude::*;
     use mockito::mock;
-    use predicates::str::{contains, ends_with};
+    use predicates::str::{contains, ends_with, starts_with};
 
     use std::io::Write;
     use std::process::Command;
@@ -169,5 +169,29 @@ mod cli {
         cmd.assert()
             .failure()
             .stderr(contains("Could not parse status code to int (u16)"));
+    }
+
+    #[tokio::test]
+    async fn test_output__all_opts_printed() -> TestResult {
+        let _m200 = mock("GET", "/200").with_status(200).create();
+        let endpoint = mockito::server_url() + "/200";
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(endpoint.as_bytes())?;
+        let mut cmd = Command::cargo_bin(NAME)?;
+
+        cmd.arg(file.path())
+            .arg("--threads")
+            .arg("10")
+            .arg("--timeout")
+            .arg("20")
+            .arg("--allow")
+            .arg("200,404")
+            .arg("--white-list")
+            .arg("http://some-url.com");
+
+        cmd.assert()
+            .success()
+            .stdout(starts_with("> Using threads: 10\n> Using timeout: 20\n> Ignoring white listed URLs\n   1. http://some-url.com\n> Allowing status codes\n   1. 200\n   2. 404"));
+        Ok(())
     }
 }
