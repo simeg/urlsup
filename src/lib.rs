@@ -590,7 +590,27 @@ mod integration_tests {
     }
 
     #[tokio::test]
-    async fn test_check__works() -> TestResult {
+    async fn test_check_urls__timeout_reached() {
+        let urls_up = UrlsUp {};
+        let opts = UrlsUpOptions {
+            white_list: None,
+            timeout: Duration::from_nanos(1), // Use very small timeout
+            allowed_status_codes: None,
+            thread_count: 1,
+            allow_timeout: false,
+        };
+        let _m = mock("GET", "/200").with_status(200).create();
+        let endpoint = mockito::server_url() + "/200";
+
+        let results = urls_up.check_urls(vec![endpoint.clone()], &opts).await;
+        let actual = results.first().expect("No UrlUpResults returned");
+
+        assert_eq!(actual.url, endpoint);
+        assert_eq!(actual.description, Some("operation timed out".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_check_urls__works() -> TestResult {
         let urls_up = UrlsUp {};
         let opts = UrlsUpOptions {
             white_list: None,
@@ -643,6 +663,90 @@ mod integration_tests {
             .unwrap()
             .contains("error trying to connect: dns error: failed to lookup address information:"));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_check__has_no_issues() -> TestResult {
+        let urls_up = UrlsUp {};
+        let opts = UrlsUpOptions {
+            white_list: None,
+            timeout: Duration::from_secs(10),
+            allowed_status_codes: None,
+            thread_count: 1,
+            allow_timeout: false,
+        };
+        let _m = mock("GET", "/200").with_status(200).create();
+        let endpoint = mockito::server_url() + "/200";
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(endpoint.as_bytes())?;
+
+        let actual = urls_up.check(vec![file.path()], opts).await;
+
+        assert!(!actual.has_issues);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_check__has_issues() -> TestResult {
+        let urls_up = UrlsUp {};
+        let opts = UrlsUpOptions {
+            white_list: None,
+            timeout: Duration::from_secs(10),
+            allowed_status_codes: None,
+            thread_count: 1,
+            allow_timeout: false,
+        };
+        let _m = mock("GET", "/404").with_status(404).create();
+        let endpoint = mockito::server_url() + "/404";
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(endpoint.as_bytes())?;
+
+        let actual = urls_up.check(vec![file.path()], opts).await;
+
+        assert!(actual.has_issues);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_check__issues_when_timeout_reached() -> TestResult {
+        let urls_up = UrlsUp {};
+        let opts = UrlsUpOptions {
+            white_list: None,
+            timeout: Duration::from_nanos(1), // Use very small timeout
+            allowed_status_codes: None,
+            thread_count: 1,
+            allow_timeout: false,
+        };
+        let _m = mock("GET", "/200").with_status(200).create();
+        let endpoint = mockito::server_url() + "/200";
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(endpoint.as_bytes())?;
+
+        let actual = urls_up.check(vec![file.path()], opts).await;
+
+        assert!(actual.has_issues);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_check__no_issues_when_timeout_reached_and_allow_timeout() -> TestResult {
+        let urls_up = UrlsUp {};
+        let opts = UrlsUpOptions {
+            white_list: None,
+            timeout: Duration::from_nanos(1), // Use very small timeout
+            allowed_status_codes: None,
+            thread_count: 1,
+            allow_timeout: true,
+        };
+        let _m = mock("GET", "/200").with_status(200).create();
+        let endpoint = mockito::server_url() + "/200";
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(endpoint.as_bytes())?;
+
+        let actual = urls_up.check(vec![file.path()], opts).await;
+
+        assert!(!actual.has_issues);
         Ok(())
     }
 }
