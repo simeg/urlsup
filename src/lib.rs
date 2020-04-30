@@ -68,15 +68,13 @@ impl fmt::Display for UrlUpResult {
 const MARKDOWN_URL_PATTERN: &str =
     r#"(http://|https://)[a-z0-9]+([-.]{1}[a-z0-9]+)*(.[a-z]{2,5})?(:[0-9]{1,5})?(/.*)?"#;
 
-const DEFAULT_TIMEOUT: u64 = 30;
-
 pub struct UrlsUp {}
 
 pub struct UrlsUpOptions {
     // White listed URLs to allow being broken
     pub white_list: Option<Vec<String>>,
-    // Timeout for getting a response
-    pub timeout: Option<u64>,
+    // Timeout in seconds for getting a response
+    pub timeout: Duration,
     // Status codes to allow being present
     pub allowed_status_codes: Option<Vec<u16>>,
     // Thread count
@@ -85,26 +83,39 @@ pub struct UrlsUpOptions {
 
 impl UrlsUp {
     pub async fn check(&self, paths: Vec<&Path>, opts: UrlsUpOptions) {
+        // Print options
+        println!("> Using threads: {}", &opts.thread_count);
+        println!("> Using timeout: {}", &opts.timeout.as_secs());
+
+        if let Some(white_list) = &opts.white_list {
+            println!("> Ignoring white listed URLs");
+            for (i, url) in white_list.iter().enumerate() {
+                println!("{:4}. {}", i + 1, url.to_string());
+            }
+        }
+
+        if let Some(allowed) = &opts.allowed_status_codes {
+            println!("> Allowing status codes");
+            for (i, status_code) in allowed.iter().enumerate() {
+                println!("{:4}. {}", i + 1, status_code.to_string());
+            }
+        }
+
+        println!("> Will check URLs in {} files", paths.len());
+        for (i, file) in paths.iter().enumerate() {
+            println!("{:4}. {}", i + 1, file.display());
+        }
+
+        println!(); // Make output more readable
+
         let spinner_find_urls = self.spinner_start("Finding URLs in files...".to_string());
 
         // Find URLs from files
         let mut urls = self.find_urls(paths);
 
-        // Ignore white listed URLs
+        // Apply white list
         if let Some(white_list) = &opts.white_list {
-            println!("\n\nIgnoring white listed URLs");
-            for (i, url) in white_list.iter().enumerate() {
-                println!("{:4}. {}", i + 1, url.to_string());
-            }
-
             urls = self.apply_white_list(urls, white_list);
-        }
-
-        if let Some(allowed) = &opts.allowed_status_codes {
-            println!("\n\nAllowing status codes");
-            for (i, status_code) in allowed.iter().enumerate() {
-                println!("{:4}. {}", i + 1, status_code.to_string());
-            }
         }
 
         // Save URL count to avoid having to clone URL list
@@ -123,7 +134,7 @@ impl UrlsUp {
         };
 
         println!(
-            "\nFound {} unique {}, {} in total",
+            "\n\n> Found {} unique {}, {} in total",
             &dedup_urls.len(),
             urls_singular_plural,
             url_count
@@ -154,7 +165,7 @@ impl UrlsUp {
         }
 
         if non_ok_urls.is_empty() {
-            println!("\n\nNo issues!");
+            println!("\n\n> No issues!");
             std::process::exit(0)
         }
 
@@ -207,12 +218,11 @@ impl UrlsUp {
     }
 
     async fn check_urls(&self, urls: Vec<String>, opts: &UrlsUpOptions) -> Vec<UrlUpResult> {
-        let timeout = Duration::from_secs(opts.timeout.unwrap_or(DEFAULT_TIMEOUT));
         let redirect_policy = Policy::limited(10);
         let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
         let client = reqwest::Client::builder()
-            .timeout(timeout)
+            .timeout(opts.timeout)
             .redirect(redirect_policy)
             .user_agent(user_agent)
             .build()
@@ -478,7 +488,7 @@ mod integration_tests {
         let urls_up = UrlsUp {};
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: None,
+            timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
         };
@@ -499,7 +509,7 @@ mod integration_tests {
         let urls_up = UrlsUp {};
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: None,
+            timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
         };
@@ -523,7 +533,7 @@ mod integration_tests {
         let urls_up = UrlsUp {};
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: None,
+            timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
         };
