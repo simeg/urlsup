@@ -1,8 +1,9 @@
 [package]
 name = "urlsup"
 version = "0.1.0"
-description = "Validate URLs in files"
+description = "CLI to validate URLs in files"
 authors = ["Simon Egersand <s.egersand@gmail.com>"]
+keywords = ["cli", "ci", "travis", "circleci", "links", "urls"]
 
 repository = "https://github.com/simeg/urlsup"
 homepage = "https://github.com/simeg/urlsup"
