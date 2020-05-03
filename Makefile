@@ -1,7 +1,9 @@
-.PHONY: check ci clippy fmt install lint publish release test
+.PHONY: check ci clippy dockerfile fmt install lint publish publish-dockerfile release test
 
 BIN_NAME = urlsup
+VERSION = "1.0.0" # TODO: Get from Cargo.toml
 CARGO = $(shell which cargo)
+DOCKER = $(shell which docker)
 
 build:
 	@$(CARGO) build
@@ -10,6 +12,9 @@ ci: lint build test
 
 clippy:
 	$(CARGO) clippy
+
+dockerfile:
+	$(DOCKER) build -t simeg/urlsup:latest -t simeg/urlsup:$(VERSION) - < Dockerfile
 
 fmt:
 	@$(CARGO) fmt
@@ -25,6 +30,9 @@ lint:
 
 publish:
 	$(CARGO) publish
+
+publish-dockerfile: dockerfile
+	$(DOCKER) push simeg/urlsup
 
 release:
 	@$(CARGO) build --release
