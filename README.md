@@ -79,6 +79,44 @@ $ urlsup README.md --allow 403,429
 # allow status code errors 403 and 429
 ```
 
+## Installation
+
+Install with `cargo` to run `urlsup` on your local machine.
+
+```bash
+cargo install urlsup
+```
+
+### Docker
+If you do not want to install `urlsup` you can simply use Docker to run it.
+
+```shell
+docker run -it --rm -v $PWD:/mnt:ro simeg/urlsup `find . -name "*.md"`
+```
+
+## Travis CI
+
+Build `urlsup` on Travis and run it.
+```yaml
+language: rust # This will default to stable rust version
+
+before_script: cargo install urlsup
+
+script: urlsup `find . -name "*.md"`
+```
+
+Or you can use Docker to run it. This is the faster alternative as `urlsup` comes pre-built.
+
+```yaml
+sudo: required
+
+services:
+  - docker
+
+script:
+  - docker run -ti --rm -v $PWD:/mnt:ro simeg/urlsup `find . -name "*.md"`
+```
+
 ## Development
 
 This repo uses a Makefile as an interface for common operations.
