@@ -131,7 +131,7 @@ full workflow using the `urlsup` action.
 Note that you have to know up front what files you want to check and pass them
 in as an argument, due to a limitation with GitHub Actions.
 
-```
+```yaml
 name: my-workflow
 on:
   push:
