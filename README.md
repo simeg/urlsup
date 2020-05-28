@@ -1,8 +1,13 @@
 # urlsup [![Build Status][build_badge]][build_status] [![Code Coverage][coverage_badge]][coverage_report]
 
-`urlsup` (_urls up_) finds URLs in files and checks whether they are up by making a `GET` request and checking the response status code. This tool is useful for lists, repos or any type of project containing URLs that you want to be up.
+`urlsup` (_urls up_) finds URLs in files and checks whether they are up by
+making a `GET` request and checking the response status code. This tool is
+useful for lists, repos or any type of project containing URLs that you want to
+be up.
 
-It's written in Rust and executes the requests async in multiple threads, making it very fast. This in combination with its ease of use makes it the perfect tool for your CI pipeline.
+It's written in Rust and executes the requests async in multiple threads,
+making it very fast. This in combination with its ease of use makes it the
+perfect tool for your CI pipeline.
 
 ## Usage
 ```bash
@@ -105,7 +110,8 @@ before_script: cargo install urlsup
 script: urlsup `find . -name "*.md"`
 ```
 
-Or you can use Docker to run it. This is the faster alternative as `urlsup` comes pre-built.
+Or you can use Docker to run it. This is the faster alternative as `urlsup`
+comes pre-built.
 
 ```yaml
 sudo: required
@@ -115,6 +121,36 @@ services:
 
 script:
   - docker run -ti --rm -v $PWD:/mnt:ro simeg/urlsup `find . -name "*.md"`
+```
+
+## GitHub Actions
+
+Run `urlsup` as part of your GitHub Actions workflow. Here is an example of a
+full workflow using the `urlsup` action.
+
+Note that you have to know up front what files you want to check and pass them
+in as an argument, due to a limitation with GitHub Actions.
+
+```
+name: my-workflow
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  validate-links:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    # This is the part specific to urlsup. Make sure to also run the checkout action before you run urlsup.
+    - name: Link Validator
+      id: urlsup
+      uses: simeg/urlsup@v1
+      with:
+        files: "README.md OTHER.md"  # Because of limitations with GitHub Actions you can't pass in an argument such as `find . -name "*.md"` here
 ```
 
 ## Development
