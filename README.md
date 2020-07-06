@@ -114,8 +114,6 @@ Or you can use Docker to run it. This is the faster alternative as `urlsup`
 comes pre-built.
 
 ```yaml
-sudo: required
-
 services:
   - docker
 
