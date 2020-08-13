@@ -5,9 +5,12 @@ making a `GET` request and checking the response status code. This tool is
 useful for lists, repos or any type of project containing URLs that you want to
 be up.
 
-It's written in Rust and executes the requests async in multiple threads,
-making it very fast. This in combination with its ease of use makes it the
-perfect tool for your CI pipeline.
+It's written in Rust (stable) and executes the requests async in multiple
+threads, making it very fast. This in combination with its ease of use makes
+it the perfect tool for your CI pipeline.
+
+This project is a slim version of
+[`awesome_bot`](https://github.com/dkhamsing/awesome_bot) but aims to be faster.
 
 ## Usage
 ```bash
@@ -101,18 +104,6 @@ docker run -it --rm -v $PWD:/mnt:ro simeg/urlsup `find . -name "*.md"`
 
 ## Travis CI
 
-Build `urlsup` on Travis and run it.
-```yaml
-language: rust # This will default to stable rust version
-
-before_script: cargo install urlsup
-
-script: urlsup `find . -name "*.md"`
-```
-
-Or you can use Docker to run it. This is the faster alternative as `urlsup`
-comes pre-built.
-
 ```yaml
 services:
   - docker
@@ -126,8 +117,8 @@ script:
 Run `urlsup` as part of your GitHub Actions workflow. Here is an example of a
 full workflow using the `urlsup` action.
 
-Note that you have to know up front what files you want to check and pass them
-in as an argument, due to a limitation with GitHub Actions.
+**Note: You have to specify exactly what files you want to check and pass them
+in as an argument, due to a limitation with GitHub Actions.**
 
 ```yaml
 name: my-workflow
@@ -148,7 +139,7 @@ jobs:
       id: urlsup
       uses: simeg/urlsup@v1
       with:
-        files: "README.md OTHER.md"  # Because of limitations with GitHub Actions you can't pass in an argument such as `find . -name "*.md"` here
+        files: "README.md OTHER.md"  # Because of limitations with GitHub Actions you _can't_ pass in an argument such as `find . -name "*.md"` here
 ```
 
 ## Development
