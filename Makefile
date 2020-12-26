@@ -1,14 +1,14 @@
 .PHONY: check ci clippy dockerfile fmt install lint publish publish-dockerfile release test
 
-BIN_NAME = urlsup
-VERSION = "1.0.0" # TODO: Get from Cargo.toml
-CARGO = $(shell which cargo)
-DOCKER = $(shell which docker)
+BIN_NAME  = urlsup
+VERSION   = $(shell awk -F'[ ="]+' '$$1 == "version" { print $$2 }' ./Cargo.toml)
+CARGO     = $(shell which cargo)
+DOCKER    = $(shell which docker)
 
 build:
 	@$(CARGO) build
 
-ci: lint build test
+ci: lint clippy build test
 
 clippy:
 	$(CARGO) clippy
