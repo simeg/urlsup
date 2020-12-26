@@ -3,7 +3,7 @@ name = "urlsup"
 version = "1.0.0"
 description = "CLI to validate URLs in files"
 authors = ["Simon Egersand <s.egersand@gmail.com>"]
-keywords = ["cli", "ci", "travis", "circleci", "links"]
+keywords = ["cli", "ci", "github", "action", "links"]
 
 repository = "https://github.com/simeg/urlsup"
 homepage = "https://github.com/simeg/urlsup"
@@ -16,10 +16,6 @@ include = [
 	"Cargo.toml",
 	"README.md"
 ]
-
-[badges]
-travis-ci = { repository = "simeg/urlsup", branch = "master" }
-codecov = { repository = "simeg/urlsup", branch = "master", service = "github" }
 
 [dependencies]
 clap = { version = "2.33.0", default-features = false }
