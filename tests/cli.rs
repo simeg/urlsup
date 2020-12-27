@@ -140,7 +140,7 @@ mod cli {
         cmd.arg("some-file-that-doesnt-exist");
 
         cmd.assert().failure();
-        cmd.assert().failure().stderr("error: Invalid value for \'<FILES>...\': File not found [some-file-that-doesnt-exist]\n");
+        cmd.assert().failure().stderr("error: Invalid value for \'<FILES>...\': File not found [\"some-file-that-doesnt-exist\"]\n");
     }
 
     #[test]

@@ -8,7 +8,7 @@ use spinners::{Spinner, Spinners};
 
 use core::fmt;
 use std::cmp::Ordering;
-use std::io::Error;
+use std::io;
 use std::path::Path;
 use std::time::Duration;
 
@@ -60,7 +60,7 @@ impl fmt::Display for UrlUpResult {
         } else if let Some(desc) = &self.description {
             write!(f, "{} {}", &self.url, desc)
         } else {
-            unreachable!("UrlUpResult should always have status_code or description")
+            panic!("UrlUpResult should always have status_code or description")
         }
     }
 }
@@ -83,14 +83,12 @@ pub struct UrlsUpOptions {
     pub allow_timeout: bool,
 }
 
-pub struct UrlsUpResult {
-    // If any issues were found
-    pub has_issues: bool,
-}
-
 impl UrlsUp {
-    pub async fn check(&self, paths: Vec<&Path>, opts: UrlsUpOptions) -> UrlsUpResult {
-        // Print options
+    pub async fn check(
+        &self,
+        paths: Vec<&Path>,
+        opts: UrlsUpOptions,
+    ) -> io::Result<Vec<UrlUpResult>> {
         println!("> Using threads: {}", &opts.thread_count);
         println!("> Using timeout (seconds): {}", &opts.timeout.as_secs());
         println!("> Allow timeout: {}", &opts.allow_timeout);
@@ -170,7 +168,7 @@ impl UrlsUp {
             .check_urls(dedup_urls, &opts)
             .await
             .into_iter()
-            .filter(|url_up_result| url_up_result.is_not_ok())
+            .filter(UrlUpResult::is_not_ok)
             .collect();
 
         if let Some(allowed) = &opts.allowed_status_codes {
@@ -185,17 +183,7 @@ impl UrlsUp {
             sp.stop();
         }
 
-        if non_ok_urls.is_empty() {
-            println!("\n\n> No issues!");
-            return UrlsUpResult { has_issues: false };
-        }
-
-        println!("\n\n> Issues");
-        for (i, url_up_result) in non_ok_urls.iter().enumerate() {
-            println!("{:4}. {}", i + 1, url_up_result.to_string());
-        }
-
-        UrlsUpResult { has_issues: true }
+        Ok(non_ok_urls)
     }
 
     fn find_urls(&self, paths: Vec<&Path>) -> Vec<String> {
@@ -213,7 +201,7 @@ impl UrlsUp {
             .collect()
     }
 
-    fn find_lines_with_url(&self, path: &Path) -> Result<Vec<String>, Error> {
+    fn find_lines_with_url(&self, path: &Path) -> io::Result<Vec<String>> {
         let matcher = RegexMatcher::new(MARKDOWN_URL_PATTERN).unwrap();
 
         let mut matches = vec![];
@@ -283,13 +271,9 @@ impl UrlsUp {
 
     fn apply_white_list(&self, urls: Vec<String>, white_list: &[String]) -> Vec<String> {
         urls.into_iter()
+            .filter(|url| !white_list.contains(url))
             .filter(|url| {
-                // If white list URL matches URL
-                if white_list.contains(url) {
-                    return false;
-                }
-
-                // If URL begins with white list URL
+                // If URL starts with any white listed URL
                 for white_listed_url in white_list.iter() {
                     if url.starts_with(white_listed_url) {
                         return false;
@@ -715,9 +699,9 @@ mod integration_tests {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 
-        let actual = urls_up.check(vec![file.path()], opts).await;
+        let actual = urls_up.check(vec![file.path()], opts).await?;
 
-        assert!(!actual.has_issues);
+        assert!(actual.is_empty());
         Ok(())
     }
 
@@ -736,9 +720,15 @@ mod integration_tests {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 
-        let actual = urls_up.check(vec![file.path()], opts).await;
+        let result = urls_up.check(vec![file.path()], opts).await?;
 
-        assert!(actual.has_issues);
+        assert!(!result.is_empty());
+
+        let actual = result.first().unwrap();
+
+        assert_eq!(actual.description, None);
+        assert_eq!(actual.url, "http://127.0.0.1:1234/404".to_string());
+        assert_eq!(actual.status_code, Some(404));
         Ok(())
     }
 
@@ -757,9 +747,15 @@ mod integration_tests {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 
-        let actual = urls_up.check(vec![file.path()], opts).await;
+        let result = urls_up.check(vec![file.path()], opts).await?;
 
-        assert!(actual.has_issues);
+        assert!(!result.is_empty());
+
+        let actual = result.first().unwrap();
+
+        assert_eq!(actual.description, Some("operation timed out".to_string()));
+        assert_eq!(actual.url, "http://127.0.0.1:1234/200".to_string());
+        assert_eq!(actual.status_code, None);
         Ok(())
     }
 
@@ -778,9 +774,9 @@ mod integration_tests {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 
-        let actual = urls_up.check(vec![file.path()], opts).await;
+        let actual = urls_up.check(vec![file.path()], opts).await?;
 
-        assert!(!actual.has_issues);
+        assert!(actual.is_empty());
         Ok(())
     }
 }

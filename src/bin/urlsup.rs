@@ -16,12 +16,12 @@ use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::time::Duration;
 
-static OPT_FILES: &str = "FILES";
-static OPT_WHITE_LIST: &str = "white-list";
-static OPT_TIMEOUT: &str = "timeout";
-static OPT_ALLOW: &str = "allow";
-static OPT_THREADS: &str = "threads";
-static OPT_ALLOW_TIMEOUT: &str = "allow-timeout";
+const OPT_FILES: &str = "FILES";
+const OPT_WHITE_LIST: &str = "white-list";
+const OPT_TIMEOUT: &str = "timeout";
+const OPT_ALLOW: &str = "allow";
+const OPT_THREADS: &str = "threads";
+const OPT_ALLOW_TIMEOUT: &str = "allow-timeout";
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -89,14 +89,16 @@ async fn main() {
         timeout: DEFAULT_TIMEOUT,
         allowed_status_codes: None,
         thread_count: num_cpus::get(),
-        allow_timeout: false,
+        allow_timeout: matches.is_present(OPT_ALLOW_TIMEOUT),
     };
 
     if let Some(white_list_urls) = matches.value_of(OPT_WHITE_LIST) {
         let white_list: Vec<String> = white_list_urls
             .split(',')
-            .map(String::from)
-            .filter(|s| !s.is_empty())
+            .filter_map(|s| match s.is_empty() {
+                true => None,
+                false => Some(s.to_string()),
+            })
             .collect();
         opts.white_list = Some(white_list);
     }
@@ -112,9 +114,13 @@ async fn main() {
     if let Some(allowed_status_codes) = matches.value_of(OPT_ALLOW) {
         let allowed: Vec<u16> = allowed_status_codes
             .split(',')
-            .filter(|s| !s.is_empty())
-            .map(|a| a.parse::<u16>())
-            .map(|a| a.expect("Could not parse status code to int (u16)"))
+            .filter_map(|s| match s.is_empty() {
+                true => None,
+                false => Some(
+                    s.parse::<u16>()
+                        .expect("Could not parse status code to int (u16)"),
+                ),
+            })
             .collect();
         opts.allowed_status_codes = Some(allowed);
     }
@@ -125,34 +131,30 @@ async fn main() {
             .unwrap_or_else(|_| panic!("Could not parse {} into an int (usize)", thread_count));
     }
 
-    if matches.is_present(OPT_ALLOW_TIMEOUT) {
-        opts.allow_timeout = true;
-    }
-
     if let Some(files) = matches.values_of(OPT_FILES) {
-        let paths: Vec<&Path> = files.map(Path::new).collect::<Vec<&Path>>();
+        let paths = files.map(Path::new).collect::<Vec<&Path>>();
 
-        let result = urls_up.check(paths, opts).await;
+        match urls_up.check(paths, opts).await {
+            Ok(result) => {
+                if result.is_empty() {
+                    println!("\n\n> No issues!");
+                } else {
+                    println!("\n\n> Issues");
+                    for (i, url_up_result) in result.iter().enumerate() {
+                        println!("{:4}. {}", i + 1, url_up_result.to_string());
+                    }
 
-        if result.has_issues {
-            std::process::exit(1)
-        } else {
-            std::process::exit(0)
+                    std::process::exit(1)
+                }
+            }
+            Err(e) => panic!("{}", e),
         }
     }
 }
 
 fn exists_on_filesystem(path: &OsStr) -> Result<(), OsString> {
-    match path.to_str() {
-        None => Err(OsString::from("Could not convert input file path -> &str")),
-        Some(p) => {
-            if Path::new(p).exists() {
-                return Ok(());
-            }
-            Err(OsString::from(format!(
-                "File not found [{}]",
-                path.to_str().unwrap()
-            )))
-        }
+    match Some(path).map(Path::new).map(Path::exists).unwrap_or(false) {
+        true => Ok(()),
+        false => Err(OsString::from(format!("File not found [{:?}]", path))),
     }
 }
