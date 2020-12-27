@@ -1,4 +1,4 @@
-# urlsup [![CI][build_badge]] [![Code Coverage][coverage_badge]][coverage_report]
+# urlsup ![CI][build_badge] [![Code Coverage][coverage_badge]][coverage_report]
 
 `urlsup` (_urls up_) finds URLs in files and checks whether they are up by
 making a `GET` request and checking the response status code. This tool is
