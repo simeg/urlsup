@@ -95,52 +95,9 @@ Install with `cargo` to run `urlsup` on your local machine.
 cargo install urlsup
 ```
 
-### Docker
-If you do not want to install `urlsup` you can simply use Docker to run it.
-
-```shell
-docker run -it --rm -v $PWD:/mnt:ro simeg/urlsup `find . -name "*.md"`
-```
-
-## Travis CI
-
-```yaml
-services:
-  - docker
-
-script:
-  - docker run -ti --rm -v $PWD:/mnt:ro simeg/urlsup `find . -name "*.md"`
-```
-
 ## GitHub Actions
 
-Run `urlsup` as part of your GitHub Actions workflow. Here is an example of a
-full workflow using the `urlsup` action.
-
-**Note: You have to specify exactly what files you want to check and pass them
-in as an argument, due to a limitation with GitHub Actions.**
-
-```yaml
-name: my-workflow
-on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
-
-jobs:
-  validate-links:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-
-    # This is the part specific to urlsup. Make sure to also run the checkout action before you run urlsup.
-    - name: Link Validator
-      id: urlsup
-      uses: simeg/urlsup@v1
-      with:
-        files: "README.md OTHER.md"  # Because of limitations with GitHub Actions you _can't_ pass in an argument such as `find . -name "*.md"` here
-```
+See [`urlsup-action`](https://github.com/simeg/urlsup-action).
 
 ## Development
 
