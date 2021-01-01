@@ -32,5 +32,5 @@ term = "0.6.1"
 [dev-dependencies]
 tempfile = "3.1.0"
 mockito = "0.28.0"
-assert_cmd = "1.0.1"
-predicates = "1.0.5"
+assert_cmd = "1.0.2"
+predicates = "1.0.6"
