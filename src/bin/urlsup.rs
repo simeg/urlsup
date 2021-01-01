@@ -1,6 +1,7 @@
 extern crate urlsup;
 #[macro_use]
 extern crate clap;
+extern crate async_trait;
 extern crate futures;
 extern crate grep;
 extern crate linkify;
@@ -10,6 +11,8 @@ extern crate spinners;
 extern crate term;
 
 use clap::{App, Arg};
+use urlsup::finder::Finder;
+use urlsup::validator::Validator;
 use urlsup::{UrlsUp, UrlsUpOptions};
 
 use std::ffi::{OsStr, OsString};
@@ -83,7 +86,7 @@ async fn main() {
         .arg(opt_allow_timeout)
         .get_matches();
 
-    let urls_up = UrlsUp {};
+    let urls_up = UrlsUp::new(Finder::default(), Validator::default());
     let mut opts = UrlsUpOptions {
         white_list: None,
         timeout: DEFAULT_TIMEOUT,
@@ -134,14 +137,14 @@ async fn main() {
     if let Some(files) = matches.values_of(OPT_FILES) {
         let paths = files.map(Path::new).collect::<Vec<&Path>>();
 
-        match urls_up.check(paths, opts).await {
+        match urls_up.run(paths, opts).await {
             Ok(result) => {
                 if result.is_empty() {
                     println!("\n\n> No issues!");
                 } else {
                     println!("\n\n> Issues");
-                    for (i, url_up_result) in result.iter().enumerate() {
-                        println!("{:4}. {}", i + 1, url_up_result.to_string());
+                    for (i, validation_result) in result.iter().enumerate() {
+                        println!("{:4}. {}", i + 1, validation_result.to_string());
                     }
 
                     std::process::exit(1)

@@ -35,7 +35,7 @@ mod cli {
 
         cmd.assert()
             .success()
-            .stdout(contains("Found 1 unique URL, 1 in total"));
+            .stdout(contains("Found 1 unique URL(s), 1 in total"));
         cmd.assert().success().stdout(ends_with("No issues!\n"));
         Ok(())
     }
@@ -45,6 +45,7 @@ mod cli {
         let _m404 = mock("GET", "/404").with_status(404).create();
         let endpoint = mockito::server_url() + "/404";
         let mut file = tempfile::NamedTempFile::new()?;
+        let file_name = file.path().display().to_string();
         file.write_all(endpoint.as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
@@ -53,10 +54,11 @@ mod cli {
         cmd.assert().failure();
         cmd.assert()
             .failure()
-            .stdout(contains("Found 1 unique URL, 1 in total"));
-        cmd.assert()
-            .failure()
-            .stdout(ends_with("> Issues\n   1. 404 http://127.0.0.1:1234/404\n"));
+            .stdout(contains("Found 1 unique URL(s), 1 in total"));
+        cmd.assert().failure().stdout(ends_with(format!(
+            "> Issues\n   1. 404 - http://127.0.0.1:1234/404 - {} - L1\n",
+            file_name
+        )));
         Ok(())
     }
 
@@ -75,15 +77,15 @@ mod cli {
         cmd.assert().failure();
         cmd.assert()
             .failure()
-            .stdout(contains("Found 2 unique URLs, 2 in total"));
+            .stdout(contains("Found 2 unique URL(s), 2 in total"));
         cmd.assert().failure().stdout(contains("> Issues"));
         // Order is not deterministic so can't assert it
         cmd.assert()
             .failure()
-            .stdout(contains("404 http://127.0.0.1:1234/404"));
+            .stdout(contains("404 - http://127.0.0.1:1234/404"));
         cmd.assert()
             .failure()
-            .stdout(contains("401 http://127.0.0.1:1234/401"));
+            .stdout(contains("401 - http://127.0.0.1:1234/401"));
         Ok(())
     }
 
@@ -106,7 +108,7 @@ mod cli {
         cmd.assert().success();
         cmd.assert()
             .success()
-            .stdout(contains("Ignoring white listed URLs\n   1. http://127.0.0.1:1234/401\n   2. http://127.0.0.1:1234/404"));
+            .stdout(contains("Ignoring white listed URL(s)\n   1. http://127.0.0.1:1234/401\n   2. http://127.0.0.1:1234/404"));
         cmd.assert().success().stdout(ends_with("No issues!\n"));
         Ok(())
     }
@@ -128,7 +130,7 @@ mod cli {
         cmd.assert().success();
         cmd.assert()
             .success()
-            .stdout(contains("Allowing status codes\n   1. 401\n   2. 404"));
+            .stdout(contains("Allowing HTTP status codes\n   1. 401\n   2. 404"));
         cmd.assert().success().stdout(ends_with("No issues!\n"));
         Ok(())
     }
@@ -192,7 +194,7 @@ mod cli {
 
         cmd.assert()
             .success()
-            .stdout(starts_with("> Using threads: 10\n> Using timeout (seconds): 20\n> Allow timeout: true\n> Ignoring white listed URLs\n   1. http://some-url.com\n> Allowing status codes\n   1. 200\n   2. 404"));
+            .stdout(starts_with("> Using threads: 10\n> Using timeout (seconds): 20\n> Allow timeout: true\n> Ignoring white listed URL(s)\n   1. http://some-url.com\n> Allowing HTTP status codes\n   1. 200\n   2. 404"));
         Ok(())
     }
 }

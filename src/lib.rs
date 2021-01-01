@@ -1,107 +1,89 @@
-use futures::{stream, StreamExt};
-use grep::regex::RegexMatcher;
-use grep::searcher::sinks::UTF8;
-use grep::searcher::Searcher;
-use linkify::{LinkFinder, LinkKind};
-use reqwest::redirect::Policy;
 use spinners::{Spinner, Spinners};
 
-use core::fmt;
+use crate::finder::{Finder, UrlFinder};
+use crate::validator::{ValidateUrls, ValidationResult, Validator};
 use std::cmp::Ordering;
 use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-#[derive(Debug, Eq, Clone)]
-pub struct UrlUpResult {
-    url: String,
-    status_code: Option<u16>,
-    description: Option<String>,
+pub mod finder;
+pub mod validator;
+
+pub struct UrlsUp {
+    finder: Finder,
+    validator: Validator,
 }
-
-impl Ord for UrlUpResult {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.url.cmp(&other.url)
-    }
-}
-
-impl PartialOrd for UrlUpResult {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for UrlUpResult {
-    fn eq(&self, other: &Self) -> bool {
-        self.url == other.url
-            && self.status_code == other.status_code
-            && self.description == other.description
-    }
-}
-
-impl UrlUpResult {
-    pub fn is_ok(&self) -> bool {
-        if let Some(num) = self.status_code {
-            num == 200
-        } else {
-            false
-        }
-    }
-
-    pub fn is_not_ok(&self) -> bool {
-        !self.is_ok()
-    }
-}
-
-impl fmt::Display for UrlUpResult {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if let Some(num) = &self.status_code {
-            write!(f, "{} {}", num.to_string(), &self.url)
-        } else if let Some(desc) = &self.description {
-            write!(f, "{} {}", &self.url, desc)
-        } else {
-            panic!("UrlUpResult should always have status_code or description")
-        }
-    }
-}
-
-const MARKDOWN_URL_PATTERN: &str =
-    r#"(http://|https://)[a-z0-9]+([-.]{1}[a-z0-9]+)*(.[a-z]{2,5})?(:[0-9]{1,5})?(/.*)?"#;
-
-pub struct UrlsUp {}
 
 pub struct UrlsUpOptions {
     // White listed URLs to allow being broken
     pub white_list: Option<Vec<String>>,
     // Timeout for getting a response
     pub timeout: Duration,
-    // Status codes to allow being present
+    // HTTP status codes to allow being present
     pub allowed_status_codes: Option<Vec<u16>>,
     // Thread count
     pub thread_count: usize,
-    // Allow URLs to time out
+    // Allow requests to time out
     pub allow_timeout: bool,
 }
 
+#[derive(Debug, Eq, Clone)]
+pub struct UrlLocation {
+    // The URL that was found
+    pub url: String,
+    // Line number where URL was found
+    pub line: u64,
+    // Name of file where URL was found
+    pub file_name: String,
+}
+
+impl Ord for UrlLocation {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.url.cmp(&other.url)
+    }
+}
+
+impl PartialOrd for UrlLocation {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for UrlLocation {
+    fn eq(&self, other: &Self) -> bool {
+        if cfg!(test) {
+            // In tests we want to compare all properties
+            (&self.url, &self.file_name, self.line) == (&other.url, &other.file_name, other.line)
+        } else {
+            self.url == other.url
+        }
+    }
+}
+
 impl UrlsUp {
-    pub async fn check(
+    pub fn new(finder: Finder, validator: Validator) -> Self {
+        Self { finder, validator }
+    }
+
+    pub async fn run(
         &self,
         paths: Vec<&Path>,
         opts: UrlsUpOptions,
-    ) -> io::Result<Vec<UrlUpResult>> {
+    ) -> io::Result<Vec<ValidationResult>> {
         println!("> Using threads: {}", &opts.thread_count);
         println!("> Using timeout (seconds): {}", &opts.timeout.as_secs());
         println!("> Allow timeout: {}", &opts.allow_timeout);
 
         if let Some(white_list) = &opts.white_list {
-            println!("> Ignoring white listed URLs");
+            println!("> Ignoring white listed URL(s)");
             for (i, url) in white_list.iter().enumerate() {
                 println!("{:4}. {}", i + 1, url.to_string());
             }
         }
 
         if let Some(allowed) = &opts.allowed_status_codes {
-            println!("> Allowing status codes");
+            println!("> Allowing HTTP status codes");
             for (i, status_code) in allowed.iter().enumerate() {
                 println!("{:4}. {}", i + 1, status_code.to_string());
             }
@@ -126,37 +108,31 @@ impl UrlsUp {
         let spinner_find_urls = self.spinner_start("Finding URLs in files...".to_string());
 
         // Find URLs from files
-        let mut urls = self.find_urls(paths);
+        let mut url_locations = self.finder.find_urls(paths)?;
 
         // Apply white list
         if let Some(white_list) = &opts.white_list {
-            urls = self.apply_white_list(urls, white_list);
+            url_locations = self.apply_white_list(url_locations, white_list);
         }
 
-        // Save URL count to avoid having to clone URL list
-        let url_count = urls.len();
+        // Save URL count to avoid having to clone URL list later
+        let url_count = url_locations.len();
 
         // Deduplicate URLs to avoid duplicate work
-        let dedup_urls = self.dedup(urls);
+        let dedup_urls = self.dedup(url_locations);
 
         if let Some(sp) = spinner_find_urls {
             sp.stop();
         }
 
-        let urls_singular_plural = match &dedup_urls.len() {
-            1 => "URL",
-            _ => "URLs",
-        };
-
         println!(
-            "\n\n> Found {} unique {}, {} in total",
+            "\n\n> Found {} unique URL(s), {} in total",
             &dedup_urls.len(),
-            urls_singular_plural,
             url_count
         );
 
-        for (i, url) in dedup_urls.iter().enumerate() {
-            println!("{:4}. {}", i + 1, url.to_string());
+        for (i, ul) in dedup_urls.iter().enumerate() {
+            println!("{:4}. {}", i + 1, ul.url.to_string());
         }
 
         println!(); // Make output more readable
@@ -164,11 +140,12 @@ impl UrlsUp {
         let validation_spinner = self.spinner_start("Checking URLs...".into());
 
         // Check URLs
-        let mut non_ok_urls: Vec<UrlUpResult> = self
-            .check_urls(dedup_urls, &opts)
+        let mut non_ok_urls: Vec<ValidationResult> = self
+            .validator
+            .validate_urls(dedup_urls, &opts)
             .await
             .into_iter()
-            .filter(UrlUpResult::is_not_ok)
+            .filter(ValidationResult::is_not_ok)
             .collect();
 
         if let Some(allowed) = &opts.allowed_status_codes {
@@ -186,96 +163,18 @@ impl UrlsUp {
         Ok(non_ok_urls)
     }
 
-    fn find_urls(&self, paths: Vec<&Path>) -> Vec<String> {
-        paths
+    fn apply_white_list(
+        &self,
+        url_locations: Vec<UrlLocation>,
+        white_list: &[String],
+    ) -> Vec<UrlLocation> {
+        url_locations
             .into_iter()
-            .flat_map(|path| {
-                self.find_lines_with_url(path).unwrap_or_else(|_| {
-                    panic!(
-                        "Something went wrong parsing URL in file: {}",
-                        path.display()
-                    )
-                })
-            })
-            .flat_map(|line| self.parse_urls(line))
-            .collect()
-    }
-
-    fn find_lines_with_url(&self, path: &Path) -> io::Result<Vec<String>> {
-        let matcher = RegexMatcher::new(MARKDOWN_URL_PATTERN).unwrap();
-
-        let mut matches = vec![];
-        Searcher::new().search_path(
-            &matcher,
-            &path,
-            UTF8(|_lnum, line| {
-                matches.push(line.trim().to_string());
-                Ok(true)
-            }),
-        )?;
-
-        Ok(matches)
-    }
-
-    fn parse_urls(&self, line: String) -> Vec<String> {
-        let mut finder = LinkFinder::new();
-        finder.kinds(&[LinkKind::Url]);
-
-        finder
-            .links(line.as_str())
-            .map(|url| url.as_str().to_string())
-            .collect()
-    }
-
-    async fn check_urls(&self, urls: Vec<String>, opts: &UrlsUpOptions) -> Vec<UrlUpResult> {
-        let redirect_policy = Policy::limited(10);
-        let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
-
-        let client = reqwest::Client::builder()
-            .timeout(opts.timeout)
-            .redirect(redirect_policy)
-            .user_agent(user_agent)
-            .build()
-            .unwrap();
-
-        let mut urls_and_responses = stream::iter(urls)
-            .map(|url| {
-                let client = &client;
-                async move {
-                    let response = client.get(&url).send().await;
-                    (url.clone(), response)
-                }
-            })
-            .buffer_unordered(opts.thread_count);
-
-        let mut result = vec![];
-        while let Some((url, response)) = urls_and_responses.next().await {
-            let url_up_result = match response {
-                Ok(res) => UrlUpResult {
-                    url,
-                    status_code: Some(res.status().as_u16()),
-                    description: None,
-                },
-                Err(err) => UrlUpResult {
-                    url,
-                    status_code: None,
-                    description: std::error::Error::source(&err).map(|e| e.to_string()),
-                },
-            };
-
-            result.push(url_up_result);
-        }
-
-        result
-    }
-
-    fn apply_white_list(&self, urls: Vec<String>, white_list: &[String]) -> Vec<String> {
-        urls.into_iter()
-            .filter(|url| !white_list.contains(url))
-            .filter(|url| {
+            .filter(|ul| !white_list.contains(&ul.url))
+            .filter(|ul| {
                 // If URL starts with any white listed URL
                 for white_listed_url in white_list.iter() {
-                    if url.starts_with(white_listed_url) {
+                    if ul.url.starts_with(white_listed_url) {
                         return false;
                     }
                 }
@@ -287,13 +186,13 @@ impl UrlsUp {
 
     fn filter_allowed_status_codes(
         &self,
-        url_up_results: Vec<UrlUpResult>,
+        validation_results: Vec<ValidationResult>,
         allowed_status_codes: Vec<u16>,
-    ) -> Vec<UrlUpResult> {
-        url_up_results
+    ) -> Vec<ValidationResult> {
+        validation_results
             .into_iter()
-            .filter(|uur| {
-                if let Some(status_code) = uur.status_code {
+            .filter(|vr| {
+                if let Some(status_code) = vr.status_code {
                     if allowed_status_codes.contains(&status_code) {
                         return false;
                     }
@@ -304,11 +203,11 @@ impl UrlsUp {
             .collect()
     }
 
-    fn filter_timeouts(&self, url_up_results: Vec<UrlUpResult>) -> Vec<UrlUpResult> {
-        url_up_results
+    fn filter_timeouts(&self, validation_results: Vec<ValidationResult>) -> Vec<ValidationResult> {
+        validation_results
             .into_iter()
-            .filter(|uur| {
-                if let Some(description) = &uur.description {
+            .filter(|vr| {
+                if let Some(description) = &vr.description {
                     if description == "operation timed out" {
                         return false;
                     }
@@ -319,7 +218,7 @@ impl UrlsUp {
             .collect()
     }
 
-    fn dedup(&self, mut list: Vec<String>) -> Vec<String> {
+    fn dedup(&self, mut list: Vec<UrlLocation>) -> Vec<UrlLocation> {
         list.sort();
         list.dedup();
         list
@@ -340,118 +239,75 @@ mod tests {
     #![allow(non_snake_case)]
 
     use super::*;
-    use std::io::Write;
-
-    type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-    #[test]
-    fn test_parse_urls() {
-        let urls_up = UrlsUp {};
-        let md_link =
-            "arbitrary [something](http://foo.bar) arbitrary http://foo2.bar arbitrary".to_string();
-        let expected = vec!["http://foo.bar".to_string(), "http://foo2.bar".to_string()];
-        let actual = urls_up.parse_urls(md_link);
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn test_parse_img_url() {
-        let urls_up = UrlsUp {};
-        let md_link = "arbitrary ![image](http://foo.bar) arbitrary".to_string();
-        let expected = vec!["http://foo.bar".to_string()];
-        let actual = urls_up.parse_urls(md_link);
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn test_parse_badge_url() {
-        let urls_up = UrlsUp {};
-        let md_link = "arbitrary [something]: http://foo.bar arbitrary".to_string();
-        let expected = vec!["http://foo.bar".to_string()];
-        let actual = urls_up.parse_urls(md_link);
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn test_find_lines_with_url__from_file() -> TestResult {
-        let urls_up = UrlsUp {};
-        let mut file = tempfile::NamedTempFile::new()?;
-        file.write_all(
-            "arbitrary [something](http://specific-link.one) arbitrary\n\
-             arbitrary [something](http://specific-link.two) arbitrary\n\
-             arbitrary [badge-something]: http://specific-link.three arbitrary\n\
-             arbitrary http://specific-link.four arbitrary"
-                .as_bytes(),
-        )?;
-
-        let actual = urls_up.find_lines_with_url(file.path()).unwrap();
-
-        let actual_line1 = &actual.get(0).unwrap().as_str().to_owned();
-        let actual_line2 = &actual.get(1).unwrap().as_str().to_owned();
-        let actual_line3 = &actual.get(2).unwrap().as_str().to_owned();
-        let actual_line4 = &actual.get(3).unwrap().as_str().to_owned();
-
-        assert_eq!(
-            actual_line1,
-            "arbitrary [something](http://specific-link.one) arbitrary"
-        );
-        assert_eq!(
-            actual_line2,
-            "arbitrary [something](http://specific-link.two) arbitrary"
-        );
-        assert_eq!(
-            actual_line3,
-            "arbitrary [badge-something]: http://specific-link.three arbitrary"
-        );
-        assert_eq!(
-            actual_line4,
-            "arbitrary http://specific-link.four arbitrary"
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_find_lines_with_urL__from_file__when_non_existing_file() -> TestResult {
-        let urls_up = UrlsUp {};
-        let non_existing_file = "non_existing_file.txt";
-        let is_err = urls_up
-            .find_lines_with_url(non_existing_file.as_ref())
-            .is_err();
-
-        assert!(is_err);
-
-        Ok(())
-    }
 
     #[test]
     fn test_dedup() {
-        let urls_up = UrlsUp {};
-        let duplicate: Vec<String> = vec!["duplicate", "duplicate", "unique-1", "unique-2"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+        let duplicate = vec![
+            UrlLocation {
+                url: "duplicate".to_string(),
+                line: 99,
+                file_name: "this-file-name-dup".to_string(),
+            },
+            UrlLocation {
+                url: "duplicate".to_string(),
+                line: 99,
+                file_name: "this-file-name-dup".to_string(),
+            },
+            UrlLocation {
+                url: "unique-1".to_string(),
+                line: 10,
+                file_name: "this-file-name-1".to_string(),
+            },
+            UrlLocation {
+                url: "unique-2".to_string(),
+                line: 20,
+                file_name: "this-file-name-2".to_string(),
+            },
+        ];
 
         let actual = urls_up.dedup(duplicate);
-        let expected: Vec<String> = vec!["duplicate", "unique-1", "unique-2"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let expected = vec![
+            UrlLocation {
+                url: "duplicate".to_string(),
+                line: 99,
+                file_name: "this-file-name-dup".to_string(),
+            },
+            UrlLocation {
+                url: "unique-1".to_string(),
+                line: 10,
+                file_name: "this-file-name-1".to_string(),
+            },
+            UrlLocation {
+                url: "unique-2".to_string(),
+                line: 20,
+                file_name: "this-file-name-2".to_string(),
+            },
+        ];
 
         assert_eq!(actual, expected)
     }
 
     #[test]
     fn test_apply_white_list__filters_out_white_listed_urls() {
-        let urls_up = UrlsUp {};
-        let urls: Vec<String> = vec![
-            "http://should-keep.com",
-            "http://should-ignore.com",
-            "http://should-also-ignore.com/something/something-else",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
+        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+        let urls = vec![
+            UrlLocation {
+                url: "http://should-keep.com".to_string(),
+                line: 0, // arbitrary
+                file_name: "arbitrary".to_string(),
+            },
+            UrlLocation {
+                url: "http://should-ignore.com".to_string(),
+                line: 0, // arbitrary
+                file_name: "arbitrary".to_string(),
+            },
+            UrlLocation {
+                url: "http://should-also-ignore.com/something/something-else".to_string(),
+                line: 0, // arbitrary
+                file_name: "arbitrary".to_string(),
+            },
+        ];
 
         let white_list: Vec<String> =
             vec!["http://should-ignore.com", "http://should-also-ignore.com"]
@@ -460,100 +316,108 @@ mod tests {
                 .collect();
 
         let actual = urls_up.apply_white_list(urls, &white_list);
-        let expected: Vec<String> = vec!["http://should-keep.com"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let expected = vec![UrlLocation {
+            url: "http://should-keep.com".to_string(),
+            line: 0,
+            file_name: "arbitrary".to_string(),
+        }];
 
         assert_eq!(actual, expected)
     }
 
     #[test]
     fn test_filter_allowed_status_codes__removes_allowed_status_codes() {
-        let urls_up = UrlsUp {};
-        let ar1 = UrlUpResult {
+        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+        let vr1 = ValidationResult {
             url: "keep-this".to_string(),
+            line: 0, // arbitrary
+            file_name: "arbitrary".to_string(),
             status_code: Some(200),
             description: None,
         };
-        let ar2 = UrlUpResult {
+        let vr2 = ValidationResult {
             url: "keep-this-2".to_string(),
+            line: 0, // arbitrary
+            file_name: "arbitrary".to_string(),
             status_code: None,
             description: Some("arbitrary".to_string()),
         };
-        let ar3 = UrlUpResult {
+        let vr3 = ValidationResult {
             url: "remove-this".to_string(),
+            line: 0, // arbitrary
+            file_name: "arbitrary".to_string(),
             status_code: Some(404),
             description: None,
         };
-        let actual = urls_up
-            .filter_allowed_status_codes(vec![ar1.clone(), ar2.clone(), ar3.clone()], vec![404]);
-        let expected = vec![ar1, ar2];
+        let actual = urls_up.filter_allowed_status_codes(vec![vr1, vr2, vr3], vec![404]);
+        let expected = vec![
+            ValidationResult {
+                url: "keep-this".to_string(),
+                line: 0, // arbitrary
+                file_name: "arbitrary".to_string(),
+                status_code: Some(200),
+                description: None,
+            },
+            ValidationResult {
+                url: "keep-this-2".to_string(),
+                line: 0, // arbitrary
+                file_name: "arbitrary".to_string(),
+                status_code: None,
+                description: Some("arbitrary".to_string()),
+            },
+        ];
 
         assert_eq!(actual, expected)
     }
 
     #[test]
-    fn test_filter_filter_timeouts__removes_timeouts() {
-        let urls_up = UrlsUp {};
-        let ar1 = UrlUpResult {
+    fn test_filter_timeouts__removes_timeouts() {
+        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+        let vr1 = ValidationResult {
             url: "keep-this".to_string(),
+            line: 0, // arbitrary
+            file_name: "arbitrary".to_string(),
             status_code: Some(200),
             description: None,
         };
-        let ar2 = UrlUpResult {
+        let vr2 = ValidationResult {
             url: "keep-this-2".to_string(),
+            line: 0, // arbitrary
+            file_name: "arbitrary".to_string(),
             status_code: None,
             description: Some("arbitrary".to_string()),
         };
-        let ar3 = UrlUpResult {
+        let vr3 = ValidationResult {
             url: "remove-this".to_string(),
+            line: 0, // arbitrary
+            file_name: "arbitrary".to_string(),
             status_code: None,
             description: Some("operation timed out".to_string()),
         };
-        let actual = urls_up.filter_timeouts(vec![ar1.clone(), ar2.clone(), ar3.clone()]);
-        let expected = vec![ar1, ar2];
+        let actual = urls_up.filter_timeouts(vec![vr1, vr2, vr3]);
+        let expected = vec![
+            ValidationResult {
+                url: "keep-this".to_string(),
+                line: 0, // arbitrary
+                file_name: "arbitrary".to_string(),
+                status_code: Some(200),
+                description: None,
+            },
+            ValidationResult {
+                url: "keep-this-2".to_string(),
+                line: 0, // arbitrary
+                file_name: "arbitrary".to_string(),
+                status_code: None,
+                description: Some("arbitrary".to_string()),
+            },
+        ];
 
         assert_eq!(actual, expected)
-    }
-
-    #[test]
-    fn test_urls_up_result__is_ok() {
-        let uup = UrlUpResult {
-            url: "irrelevant".to_string(),
-            status_code: Some(200),
-            description: None,
-        };
-
-        assert!(uup.is_ok());
-        assert!(!uup.is_not_ok());
-    }
-
-    #[test]
-    fn test_urls_up_result__to_string() {
-        let uup_200 = UrlUpResult {
-            url: "http://some-domain.com".to_string(),
-            status_code: Some(200),
-            description: Some("should ignore this".to_string()),
-        };
-
-        assert_eq!(uup_200.to_string(), "200 http://some-domain.com");
-
-        let uup_description = UrlUpResult {
-            url: "http://some-domain.com".to_string(),
-            status_code: None,
-            description: Some("some-description".to_string()),
-        };
-
-        assert_eq!(
-            uup_description.to_string(),
-            "http://some-domain.com some-description"
-        );
     }
 }
 
 #[cfg(test)]
-mod integration_tests {
+mod it_tests {
     #![allow(non_snake_case)]
 
     use super::*;
@@ -563,130 +427,8 @@ mod integration_tests {
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     #[tokio::test]
-    async fn test_check_urls__handles_url_with_status_code() {
-        let urls_up = UrlsUp {};
-        let opts = UrlsUpOptions {
-            white_list: None,
-            timeout: Duration::from_secs(10),
-            allowed_status_codes: None,
-            thread_count: 1,
-            allow_timeout: false,
-        };
-        let _m = mock("GET", "/200").with_status(200).create();
-        let endpoint = mockito::server_url() + "/200";
-
-        let results = urls_up.check_urls(vec![endpoint.clone()], &opts).await;
-        let actual = results.first().expect("No UrlUpResults returned");
-
-        assert_eq!(actual.url, endpoint);
-        assert_eq!(actual.status_code, Some(200));
-        assert_eq!(actual.description, None);
-    }
-
-    #[tokio::test]
-    async fn test_check_urls__handles_not_available_url() {
-        let urls_up = UrlsUp {};
-        let opts = UrlsUpOptions {
-            white_list: None,
-            timeout: Duration::from_secs(10),
-            allowed_status_codes: None,
-            thread_count: 1,
-            allow_timeout: false,
-        };
-        let endpoint = "https://localhost.urls_up".to_string();
-
-        let results = urls_up.check_urls(vec![endpoint.clone()], &opts).await;
-        let actual = results.first().expect("No UrlUpResults returned");
-
-        assert_eq!(actual.url, endpoint);
-        assert_eq!(actual.status_code, None);
-        assert!(actual
-            .description
-            .as_ref()
-            .unwrap()
-            .contains("error trying to connect: dns error: failed to lookup address information:"));
-    }
-
-    #[tokio::test]
-    async fn test_check_urls__timeout_reached() {
-        let urls_up = UrlsUp {};
-        let opts = UrlsUpOptions {
-            white_list: None,
-            timeout: Duration::from_nanos(1), // Use very small timeout
-            allowed_status_codes: None,
-            thread_count: 1,
-            allow_timeout: false,
-        };
-        let _m = mock("GET", "/200").with_status(200).create();
-        let endpoint = mockito::server_url() + "/200";
-
-        let results = urls_up.check_urls(vec![endpoint.clone()], &opts).await;
-        let actual = results.first().expect("No UrlUpResults returned");
-
-        assert_eq!(actual.url, endpoint);
-        assert_eq!(actual.description, Some("operation timed out".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_check_urls__works() -> TestResult {
-        let urls_up = UrlsUp {};
-        let opts = UrlsUpOptions {
-            white_list: None,
-            timeout: Duration::from_secs(10),
-            allowed_status_codes: None,
-            thread_count: 1,
-            allow_timeout: false,
-        };
-        let _m200 = mock("GET", "/200").with_status(200).create();
-        let _m404 = mock("GET", "/404").with_status(404).create();
-        let endpoint_200 = mockito::server_url() + "/200";
-        let endpoint_404 = mockito::server_url() + "/404";
-        let endpoint_non_existing = "https://localhost.urls_up".to_string();
-
-        let mut file = tempfile::NamedTempFile::new()?;
-        file.write_all(
-            format!(
-                "arbitrary {} arbitrary [arbitrary]({}) arbitrary {}",
-                endpoint_200, endpoint_404, endpoint_non_existing
-            )
-            .as_bytes(),
-        )?;
-
-        let mut actual: Vec<UrlUpResult> = urls_up
-            .check_urls(
-                vec![
-                    endpoint_200.clone(),
-                    endpoint_404.clone(),
-                    endpoint_non_existing.clone(),
-                ],
-                &opts,
-            )
-            .await;
-
-        actual.sort(); // Sort to be able to assert deterministically
-
-        assert_eq!(actual[0].url, endpoint_200);
-        assert_eq!(actual[0].status_code, Some(200));
-        assert_eq!(actual[0].description, None);
-
-        assert_eq!(actual[1].url, endpoint_404);
-        assert_eq!(actual[1].status_code, Some(404));
-        assert_eq!(actual[1].description, None);
-
-        assert_eq!(actual[2].url, endpoint_non_existing);
-        assert_eq!(actual[2].status_code, None);
-        assert!(actual[2]
-            .description
-            .as_ref()
-            .unwrap()
-            .contains("error trying to connect: dns error: failed to lookup address information:"));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_check__has_no_issues() -> TestResult {
-        let urls_up = UrlsUp {};
+    async fn test_run__has_no_issues() -> TestResult {
+        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
             white_list: None,
             timeout: Duration::from_secs(10),
@@ -699,15 +441,15 @@ mod integration_tests {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 
-        let actual = urls_up.check(vec![file.path()], opts).await?;
+        let actual = urls_up.run(vec![file.path()], opts).await?;
 
         assert!(actual.is_empty());
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_check__has_issues() -> TestResult {
-        let urls_up = UrlsUp {};
+    async fn test_run__has_issues() -> TestResult {
+        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
             white_list: None,
             timeout: Duration::from_secs(10),
@@ -720,7 +462,7 @@ mod integration_tests {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 
-        let result = urls_up.check(vec![file.path()], opts).await?;
+        let result = urls_up.run(vec![file.path()], opts).await?;
 
         assert!(!result.is_empty());
 
@@ -733,8 +475,8 @@ mod integration_tests {
     }
 
     #[tokio::test]
-    async fn test_check__issues_when_timeout_reached() -> TestResult {
-        let urls_up = UrlsUp {};
+    async fn test_run__issues_when_timeout_reached() -> TestResult {
+        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
             white_list: None,
             timeout: Duration::from_nanos(1), // Use very small timeout
@@ -747,7 +489,7 @@ mod integration_tests {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 
-        let result = urls_up.check(vec![file.path()], opts).await?;
+        let result = urls_up.run(vec![file.path()], opts).await?;
 
         assert!(!result.is_empty());
 
@@ -760,8 +502,8 @@ mod integration_tests {
     }
 
     #[tokio::test]
-    async fn test_check__no_issues_when_timeout_reached_and_allow_timeout() -> TestResult {
-        let urls_up = UrlsUp {};
+    async fn test_run__no_issues_when_timeout_reached_and_allow_timeout() -> TestResult {
+        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
             white_list: None,
             timeout: Duration::from_nanos(1), // Use very small timeout
@@ -774,7 +516,7 @@ mod integration_tests {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 
-        let actual = urls_up.check(vec![file.path()], opts).await?;
+        let actual = urls_up.run(vec![file.path()], opts).await?;
 
         assert!(actual.is_empty());
         Ok(())
