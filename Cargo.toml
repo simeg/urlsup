@@ -20,8 +20,7 @@ include = [
 [dependencies]
 async-trait = "0.1.42"
 clap = { version = "2.33.0", default-features = false }
-# TODO: Update to reqwest > 0.10.10 when it is released
-reqwest = { git ="https://github.com/seanmonstar/reqwest.git", rev = "1f425a0" }
+reqwest = "0.11.0"
 tokio = { version = "1.0.1", features = ["macros", "rt-multi-thread"] }
 futures = "0.3.8"
 grep = "0.2.7"

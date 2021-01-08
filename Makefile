@@ -6,7 +6,7 @@ CARGO     = $(shell which cargo)
 check:
 	@$(CARGO) build --check
 
-ci: lint clippy build test
+ci: lint clippy test
 
 clippy:
 	$(CARGO) clippy
