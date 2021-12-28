@@ -10,7 +10,7 @@ homepage = "https://github.com/simeg/urlsup"
 documentation = "https://github.com/simeg/urlsup/blob/master/README.md"
 readme = "README.md"
 license = "MIT"
-edition = "2018"
+edition = "2021"
 include = [
 	"src/**/*",
 	"Cargo.toml",
