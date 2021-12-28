@@ -226,7 +226,7 @@ impl UrlsUp {
 
     fn spinner_start(&self, msg: String) -> Option<Spinner> {
         if term::stdout().is_some() {
-            Some(Spinner::new(Spinners::Dots, msg))
+            Some(Spinner::new(&Spinners::Dots, msg))
         } else {
             println!("{}", msg);
             None

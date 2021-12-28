@@ -18,19 +18,19 @@ include = [
 ]
 
 [dependencies]
-async-trait = "0.1.42"
-clap = { version = "2.33.0", default-features = false }
-reqwest = "0.11.1"
-tokio = { version = "1.2.0", features = ["macros", "rt-multi-thread"] }
-futures = "0.3.13"
-grep = "0.2.7"
-linkify = "0.5.0"
-num_cpus = "1.13.0"
-spinners = "1.2.0"
+async-trait = "0.1.52"
+clap = { version = "2.34.0", default-features = false }
+reqwest = "0.11.8"
+tokio = { version = "1.15.0", features = ["macros", "rt-multi-thread"] }
+futures = "0.3.19"
+grep = "0.2.8"
+linkify = "0.8.0"
+num_cpus = "1.13.1"
+spinners = "2.0.0"
 term = "0.7.0"
 
 [dev-dependencies]
 tempfile = "3.2.0"
-mockito = "0.29.0"
-assert_cmd = "1.0.3"
-predicates = "1.0.7"
+mockito = "0.30.0"
+assert_cmd = "2.0.2"
+predicates = "2.1.0"

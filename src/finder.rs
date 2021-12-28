@@ -15,13 +15,8 @@ pub trait UrlFinder {
     fn find_urls(&self, paths: Vec<&Path>) -> io::Result<Vec<UrlLocation>>;
 }
 
+#[derive(Default)]
 pub struct Finder {}
-
-impl Default for Finder {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 impl UrlFinder for Finder {
     fn find_urls(&self, paths: Vec<&Path>) -> io::Result<Vec<UrlLocation>> {

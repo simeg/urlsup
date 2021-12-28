@@ -16,13 +16,8 @@ pub trait ValidateUrls {
     ) -> Vec<ValidationResult>;
 }
 
+#[derive(Default)]
 pub struct Validator {}
-
-impl Default for Validator {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 #[derive(Debug, Eq, Clone)]
 pub struct ValidationResult {
