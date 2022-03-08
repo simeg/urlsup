@@ -78,14 +78,14 @@ impl UrlsUp {
         if let Some(white_list) = &opts.white_list {
             println!("> Ignoring white listed URL(s)");
             for (i, url) in white_list.iter().enumerate() {
-                println!("{:4}. {}", i + 1, url.to_string());
+                println!("{:4}. {}", i + 1, url);
             }
         }
 
         if let Some(allowed) = &opts.allowed_status_codes {
             println!("> Allowing HTTP status codes");
             for (i, status_code) in allowed.iter().enumerate() {
-                println!("{:4}. {}", i + 1, status_code.to_string());
+                println!("{:4}. {}", i + 1, status_code);
             }
         }
 
@@ -132,7 +132,7 @@ impl UrlsUp {
         );
 
         for (i, ul) in dedup_urls.iter().enumerate() {
-            println!("{:4}. {}", i + 1, ul.url.to_string());
+            println!("{:4}. {}", i + 1, ul.url);
         }
 
         println!(); // Make output more readable
@@ -226,7 +226,7 @@ impl UrlsUp {
 
     fn spinner_start(&self, msg: String) -> Option<Spinner> {
         if term::stdout().is_some() {
-            Some(Spinner::new(&Spinners::Dots, msg))
+            Some(Spinner::new(Spinners::Dots, msg))
         } else {
             println!("{}", msg);
             None

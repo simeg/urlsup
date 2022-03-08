@@ -68,10 +68,7 @@ impl fmt::Display for ValidationResult {
             write!(
                 f,
                 "{} - {} - {} - L{}",
-                num.to_string(),
-                &self.url,
-                &self.file_name,
-                &self.line
+                num, &self.url, &self.file_name, &self.line
             )
         } else if let Some(desc) = &self.description {
             write!(
