@@ -17,17 +17,17 @@ This project is a slim version of
 USAGE:
     urlsup [OPTIONS] <FILES>...
 
-FLAGS:
-        --allow-timeout             URLs that time out are allowed
+ARGS:
+    <FILES>...    Files to check
 
 OPTIONS:
     -a, --allow <status codes>      Comma separated status code errors to allow
-        --threads <thread count>    Thread count for making requests (default: CPU core count)
+        --allow-list <urls>         Comma separated URLs to allow being non-OK
+        --allow-timeout             URLs that time out are allowed
+    -h, --help                      Print help information
     -t, --timeout <seconds>         Connection timeout in seconds (default: 30)
-    -w, --white-list <urls>         Comma separated URLs to white list
-
-ARGS:
-    <FILES>...    Files to check
+        --threads <thread count>    Thread count for making requests (default: CPU core count)
+    -V, --version                   Print version information
 ```
 
 ## Examples
@@ -71,8 +71,8 @@ $ urlsup `find . -name "*.md"`
 ```
 
 ```bash
-$ urlsup README.md --white-list rust,crates
-# white list all links starting with rust or crates
+$ urlsup README.md --allow-list rust,crates
+# allow list all links starting with rust or crates
 
 $ urlsup README.md,README-zh.md
 # check links in 2 files

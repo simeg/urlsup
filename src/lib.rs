@@ -16,8 +16,8 @@ pub struct UrlsUp {
 }
 
 pub struct UrlsUpOptions {
-    // White listed URLs to allow being broken
-    pub white_list: Option<Vec<String>>,
+    // URLs that are allowed to be non-OK
+    pub allow_list: Option<Vec<String>>,
     // Timeout for getting a response
     pub timeout: Duration,
     // HTTP status codes to allow being present
@@ -75,9 +75,9 @@ impl UrlsUp {
         println!("> Using timeout (seconds): {}", &opts.timeout.as_secs());
         println!("> Allow timeout: {}", &opts.allow_timeout);
 
-        if let Some(white_list) = &opts.white_list {
-            println!("> Ignoring white listed URL(s)");
-            for (i, url) in white_list.iter().enumerate() {
+        if let Some(allow_list) = &opts.allow_list {
+            println!("> Ignoring allow listed URL(s)");
+            for (i, url) in allow_list.iter().enumerate() {
                 println!("{:4}. {}", i + 1, url);
             }
         }
@@ -110,9 +110,9 @@ impl UrlsUp {
         // Find URLs from files
         let mut url_locations = self.finder.find_urls(paths)?;
 
-        // Apply white list
-        if let Some(white_list) = &opts.white_list {
-            url_locations = self.apply_white_list(url_locations, white_list);
+        // Apply allow list
+        if let Some(allow_list) = &opts.allow_list {
+            url_locations = self.apply_allow_list(url_locations, allow_list);
         }
 
         // Save URL count to avoid having to clone URL list later
@@ -163,18 +163,18 @@ impl UrlsUp {
         Ok(non_ok_urls)
     }
 
-    fn apply_white_list(
+    fn apply_allow_list(
         &self,
         url_locations: Vec<UrlLocation>,
-        white_list: &[String],
+        allow_list: &[String],
     ) -> Vec<UrlLocation> {
         url_locations
             .into_iter()
-            .filter(|ul| !white_list.contains(&ul.url))
+            .filter(|ul| !allow_list.contains(&ul.url))
             .filter(|ul| {
-                // If URL starts with any white listed URL
-                for white_listed_url in white_list.iter() {
-                    if ul.url.starts_with(white_listed_url) {
+                // If URL starts with any allow listed URL
+                for allow_listed_url in allow_list.iter() {
+                    if ul.url.starts_with(allow_listed_url) {
                         return false;
                     }
                 }
@@ -289,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_white_list__filters_out_white_listed_urls() {
+    fn test_apply_allow_list__filters_out_allow_listed_urls() {
         let urls_up = UrlsUp::new(Finder::default(), Validator::default());
         let urls = vec![
             UrlLocation {
@@ -309,13 +309,13 @@ mod tests {
             },
         ];
 
-        let white_list: Vec<String> =
+        let allow_list: Vec<String> =
             vec!["http://should-ignore.com", "http://should-also-ignore.com"]
                 .into_iter()
                 .map(String::from)
                 .collect();
 
-        let actual = urls_up.apply_white_list(urls, &white_list);
+        let actual = urls_up.apply_allow_list(urls, &allow_list);
         let expected = vec![UrlLocation {
             url: "http://should-keep.com".to_string(),
             line: 0,
@@ -430,7 +430,7 @@ mod it_tests {
     async fn test_run__has_no_issues() -> TestResult {
         let urls_up = UrlsUp::new(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
-            white_list: None,
+            allow_list: None,
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
@@ -451,7 +451,7 @@ mod it_tests {
     async fn test_run__has_issues() -> TestResult {
         let urls_up = UrlsUp::new(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
-            white_list: None,
+            allow_list: None,
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
@@ -478,7 +478,7 @@ mod it_tests {
     async fn test_run__issues_when_timeout_reached() -> TestResult {
         let urls_up = UrlsUp::new(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
-            white_list: None,
+            allow_list: None,
             timeout: Duration::from_nanos(1), // Use very small timeout
             allowed_status_codes: None,
             thread_count: 1,
@@ -505,7 +505,7 @@ mod it_tests {
     async fn test_run__no_issues_when_timeout_reached_and_allow_timeout() -> TestResult {
         let urls_up = UrlsUp::new(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
-            white_list: None,
+            allow_list: None,
             timeout: Duration::from_nanos(1), // Use very small timeout
             allowed_status_codes: None,
             thread_count: 1,

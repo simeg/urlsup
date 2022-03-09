@@ -20,7 +20,7 @@ use std::path::Path;
 use std::time::Duration;
 
 const OPT_FILES: &str = "FILES";
-const OPT_WHITE_LIST: &str = "white-list";
+const OPT_ALLOW_LIST: &str = "allow-list";
 const OPT_TIMEOUT: &str = "timeout";
 const OPT_ALLOW: &str = "allow";
 const OPT_THREADS: &str = "threads";
@@ -38,10 +38,9 @@ async fn main() {
         .required(true)
         .index(1);
 
-    let opt_white_list = Arg::new(OPT_WHITE_LIST)
-        .help("Comma separated URLs to white list")
-        .short('w')
-        .long(OPT_WHITE_LIST)
+    let opt_allow_list = Arg::new(OPT_ALLOW_LIST)
+        .help("Comma separated URLs to allow being non-OK")
+        .long(OPT_ALLOW_LIST)
         .value_name("urls")
         .takes_value(true)
         .required(false);
@@ -80,7 +79,7 @@ async fn main() {
         .author(crate_authors!())
         .about(crate_description!())
         .arg(opt_word)
-        .arg(opt_white_list)
+        .arg(opt_allow_list)
         .arg(opt_timeout)
         .arg(opt_allow)
         .arg(opt_threads)
@@ -89,22 +88,22 @@ async fn main() {
 
     let urls_up = UrlsUp::new(Finder::default(), Validator::default());
     let mut opts = UrlsUpOptions {
-        white_list: None,
+        allow_list: None,
         timeout: DEFAULT_TIMEOUT,
         allowed_status_codes: None,
         thread_count: num_cpus::get(),
         allow_timeout: matches.is_present(OPT_ALLOW_TIMEOUT),
     };
 
-    if let Some(white_list_urls) = matches.value_of(OPT_WHITE_LIST) {
-        let white_list: Vec<String> = white_list_urls
+    if let Some(allow_list_urls) = matches.value_of(OPT_ALLOW_LIST) {
+        let allow_list: Vec<String> = allow_list_urls
             .split(',')
             .filter_map(|s| match s.is_empty() {
                 true => None,
                 false => Some(s.to_string()),
             })
             .collect();
-        opts.white_list = Some(white_list);
+        opts.allow_list = Some(allow_list);
     }
 
     if let Some(str_timeout) = matches.value_of(OPT_TIMEOUT) {

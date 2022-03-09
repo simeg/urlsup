@@ -90,7 +90,7 @@ mod cli {
     }
 
     #[tokio::test]
-    async fn test_output__when_white_list_provided() -> TestResult {
+    async fn test_output__when_allow_list_provided() -> TestResult {
         let _m200 = mock("GET", "/200").with_status(200).create();
         let _m401 = mock("GET", "/401").with_status(401).create();
         let _m404 = mock("GET", "/404").with_status(404).create();
@@ -102,13 +102,13 @@ mod cli {
         let mut cmd = Command::cargo_bin(NAME)?;
 
         cmd.arg(file.path())
-            .arg("--white-list")
+            .arg("--allow-list")
             .arg("http://127.0.0.1:1234/401,http://127.0.0.1:1234/404");
 
         cmd.assert().success();
         cmd.assert()
             .success()
-            .stdout(contains("Ignoring white listed URL(s)\n   1. http://127.0.0.1:1234/401\n   2. http://127.0.0.1:1234/404"));
+            .stdout(contains("Ignoring allow listed URL(s)\n   1. http://127.0.0.1:1234/401\n   2. http://127.0.0.1:1234/404"));
         cmd.assert().success().stdout(ends_with("No issues!\n"));
         Ok(())
     }
@@ -188,13 +188,13 @@ mod cli {
             .arg("20")
             .arg("--allow")
             .arg("200,404")
-            .arg("--white-list")
+            .arg("--allow-list")
             .arg("http://some-url.com")
             .arg("--allow-timeout");
 
         cmd.assert()
             .success()
-            .stdout(starts_with("> Using threads: 10\n> Using timeout (seconds): 20\n> Allow timeout: true\n> Ignoring white listed URL(s)\n   1. http://some-url.com\n> Allowing HTTP status codes\n   1. 200\n   2. 404"));
+            .stdout(starts_with("> Using threads: 10\n> Using timeout (seconds): 20\n> Allow timeout: true\n> Ignoring allow listed URL(s)\n   1. http://some-url.com\n> Allowing HTTP status codes\n   1. 200\n   2. 404"));
         Ok(())
     }
 }

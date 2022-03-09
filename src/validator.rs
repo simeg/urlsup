@@ -223,7 +223,7 @@ mod tests {
     async fn test_validate_urls__handles_url_with_status_code() {
         let validator = Validator::default();
         let opts = UrlsUpOptions {
-            white_list: None,
+            allow_list: None,
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
@@ -253,7 +253,7 @@ mod tests {
     async fn test_validate_urls__handles_not_available_url() {
         let validator = Validator::default();
         let opts = UrlsUpOptions {
-            white_list: None,
+            allow_list: None,
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
@@ -286,7 +286,7 @@ mod tests {
     async fn test_validate_urls__timeout_reached() {
         let validator = Validator::default();
         let opts = UrlsUpOptions {
-            white_list: None,
+            allow_list: None,
             timeout: Duration::from_nanos(1), // Use very small timeout
             allowed_status_codes: None,
             thread_count: 1,
@@ -315,7 +315,7 @@ mod tests {
     async fn test_validate_urls__works() -> TestResult {
         let validator = Validator::default();
         let opts = UrlsUpOptions {
-            white_list: None,
+            allow_list: None,
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
