@@ -125,7 +125,7 @@ mod cli {
         file.write_all(format!("{} {} {}", endpoint_200, endpoint_401, endpoint_404).as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
-        cmd.arg(file.path()).arg("--allow").arg("401,404");
+        cmd.arg(file.path()).arg("--allow-status").arg("401,404");
 
         cmd.assert().success();
         cmd.assert()
@@ -165,7 +165,7 @@ mod cli {
         let mut cmd = Command::cargo_bin(NAME).unwrap();
         let non_number = "not-a-number";
 
-        cmd.arg(file.path()).arg("--allow").arg(non_number);
+        cmd.arg(file.path()).arg("--allow-status").arg(non_number);
 
         cmd.assert().failure();
         cmd.assert()
@@ -186,7 +186,7 @@ mod cli {
             .arg("10")
             .arg("--timeout")
             .arg("20")
-            .arg("--allow")
+            .arg("--allow-status")
             .arg("200,404")
             .arg("--allow-list")
             .arg("http://some-url.com")

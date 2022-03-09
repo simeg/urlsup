@@ -21,13 +21,13 @@ ARGS:
     <FILES>...    Files to check
 
 OPTIONS:
-    -a, --allow <status codes>      Comma separated status code errors to allow
-        --allow-list <urls>         Comma separated URLs to allow being non-OK
-        --allow-timeout             URLs that time out are allowed
-    -h, --help                      Print help information
-    -t, --timeout <seconds>         Connection timeout in seconds (default: 30)
-        --threads <thread count>    Thread count for making requests (default: CPU core count)
-    -V, --version                   Print version information
+        --allow-list <urls>              Comma separated URLs to allow being non-OK
+        --allow-status <status codes>    Comma separated status codes to allow
+        --allow-timeout                  URLs that time out are allowed
+    -h, --help                           Print help information
+        --threads <thread count>         Thread count for making requests (default: CPU core count)
+        --timeout <seconds>              Connection timeout per URL in seconds (default: 30)
+    -V, --version                        Print version information
 ```
 
 ## Examples

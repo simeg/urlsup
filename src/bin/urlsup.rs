@@ -22,7 +22,7 @@ use std::time::Duration;
 const OPT_FILES: &str = "FILES";
 const OPT_ALLOW_LIST: &str = "allow-list";
 const OPT_TIMEOUT: &str = "timeout";
-const OPT_ALLOW: &str = "allow";
+const OPT_ALLOW_STATUS: &str = "allow-status";
 const OPT_THREADS: &str = "threads";
 const OPT_ALLOW_TIMEOUT: &str = "allow-timeout";
 
@@ -46,17 +46,15 @@ async fn main() {
         .required(false);
 
     let opt_timeout = Arg::new(OPT_TIMEOUT)
-        .help("Connection timeout in seconds (default: 30)")
-        .short('t')
+        .help("Connection timeout per URL in seconds (default: 30)")
         .long(OPT_TIMEOUT)
         .value_name("seconds")
         .takes_value(true)
         .required(false);
 
-    let opt_allow = Arg::new(OPT_ALLOW)
-        .help("Comma separated status code errors to allow")
-        .short('a')
-        .long(OPT_ALLOW)
+    let opt_allow = Arg::new(OPT_ALLOW_STATUS)
+        .help("Comma separated status codes to allow")
+        .long(OPT_ALLOW_STATUS)
         .value_name("status codes")
         .takes_value(true)
         .required(false);
@@ -114,7 +112,7 @@ async fn main() {
         opts.timeout = timeout;
     }
 
-    if let Some(allowed_status_codes) = matches.value_of(OPT_ALLOW) {
+    if let Some(allowed_status_codes) = matches.value_of(OPT_ALLOW_STATUS) {
         let allowed: Vec<u16> = allowed_status_codes
             .split(',')
             .filter_map(|s| match s.is_empty() {
