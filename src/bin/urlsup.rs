@@ -4,6 +4,7 @@ extern crate clap;
 extern crate async_trait;
 extern crate futures;
 extern crate grep;
+extern crate json_value_merge;
 extern crate linkify;
 extern crate num_cpus;
 extern crate reqwest;
@@ -11,20 +12,23 @@ extern crate spinners;
 extern crate term;
 
 use clap::{Arg, Command};
-use urlsup::finder::Finder;
-use urlsup::validator::Validator;
+use urlsup::finder::UrlFinder;
+use urlsup::validator::UrlValidator;
 use urlsup::{UrlsUp, UrlsUpOptions};
 
 use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
+use urlsup::formatter::JsonFormatter;
+use urlsup::printer::Writer;
 
 const OPT_FILES: &str = "FILES";
-const OPT_WHITE_LIST: &str = "white-list";
+const OPT_ALLOW_LIST: &str = "allow-list";
 const OPT_TIMEOUT: &str = "timeout";
-const OPT_ALLOW: &str = "allow";
+const OPT_ALLOW_STATUS: &str = "allow-status";
 const OPT_THREADS: &str = "threads";
 const OPT_ALLOW_TIMEOUT: &str = "allow-timeout";
+const OPT_OUTPUT_TO_FILE: &str = "output-to-file";
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -38,26 +42,23 @@ async fn main() {
         .required(true)
         .index(1);
 
-    let opt_white_list = Arg::new(OPT_WHITE_LIST)
-        .help("Comma separated URLs to white list")
-        .short('w')
-        .long(OPT_WHITE_LIST)
+    let opt_allow_list = Arg::new(OPT_ALLOW_LIST)
+        .help("Comma separated URLs to allow being non-OK")
+        .long(OPT_ALLOW_LIST)
         .value_name("urls")
         .takes_value(true)
         .required(false);
 
     let opt_timeout = Arg::new(OPT_TIMEOUT)
-        .help("Connection timeout in seconds (default: 30)")
-        .short('t')
+        .help("Connection timeout per URL in seconds (default: 30)")
         .long(OPT_TIMEOUT)
         .value_name("seconds")
         .takes_value(true)
         .required(false);
 
-    let opt_allow = Arg::new(OPT_ALLOW)
-        .help("Comma separated status code errors to allow")
-        .short('a')
-        .long(OPT_ALLOW)
+    let opt_allow = Arg::new(OPT_ALLOW_STATUS)
+        .help("Comma separated status codes to allow")
+        .long(OPT_ALLOW_STATUS)
         .value_name("status codes")
         .takes_value(true)
         .required(false);
@@ -75,36 +76,49 @@ async fn main() {
         .takes_value(false)
         .required(false);
 
+    let opt_output_to_file = Arg::new(OPT_OUTPUT_TO_FILE)
+        .help("Output results to file (urlsup-result.json)")
+        .long(OPT_OUTPUT_TO_FILE)
+        .takes_value(false)
+        .required(false);
+
     let matches = Command::new("urls_up")
         .version(crate_version!())
         .author(crate_authors!())
         .about(crate_description!())
         .arg(opt_word)
-        .arg(opt_white_list)
+        .arg(opt_allow_list)
         .arg(opt_timeout)
         .arg(opt_allow)
         .arg(opt_threads)
         .arg(opt_allow_timeout)
+        .arg(opt_output_to_file)
         .get_matches();
 
-    let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+    let urls_up = UrlsUp::new(
+        UrlFinder::default(),
+        UrlValidator::default(),
+        Writer::default(),
+        JsonFormatter::default(),
+    );
     let mut opts = UrlsUpOptions {
-        white_list: None,
+        allow_list: None,
         timeout: DEFAULT_TIMEOUT,
         allowed_status_codes: None,
         thread_count: num_cpus::get(),
         allow_timeout: matches.is_present(OPT_ALLOW_TIMEOUT),
+        output_to_file: matches.is_present(OPT_OUTPUT_TO_FILE),
     };
 
-    if let Some(white_list_urls) = matches.value_of(OPT_WHITE_LIST) {
-        let white_list: Vec<String> = white_list_urls
+    if let Some(allow_list_urls) = matches.value_of(OPT_ALLOW_LIST) {
+        let allow_list: Vec<String> = allow_list_urls
             .split(',')
             .filter_map(|s| match s.is_empty() {
                 true => None,
                 false => Some(s.to_string()),
             })
             .collect();
-        opts.white_list = Some(white_list);
+        opts.allow_list = Some(allow_list);
     }
 
     if let Some(str_timeout) = matches.value_of(OPT_TIMEOUT) {
@@ -115,7 +129,7 @@ async fn main() {
         opts.timeout = timeout;
     }
 
-    if let Some(allowed_status_codes) = matches.value_of(OPT_ALLOW) {
+    if let Some(allowed_status_codes) = matches.value_of(OPT_ALLOW_STATUS) {
         let allowed: Vec<u16> = allowed_status_codes
             .split(',')
             .filter_map(|s| match s.is_empty() {
@@ -139,19 +153,11 @@ async fn main() {
         let paths = files.map(Path::new).collect::<Vec<&Path>>();
 
         match urls_up.run(paths, opts).await {
-            Ok(result) => {
-                if result.is_empty() {
-                    println!("\n\n> No issues!");
-                } else {
-                    println!("\n\n> Issues");
-                    for (i, validation_result) in result.iter().enumerate() {
-                        println!("{:4}. {}", i + 1, validation_result);
-                    }
-
-                    std::process::exit(1)
-                }
+            Ok(_) => std::process::exit(0),
+            Err(e) => {
+                println!("{}", e);
+                std::process::exit(1)
             }
-            Err(e) => panic!("{}", e),
         }
     }
 }

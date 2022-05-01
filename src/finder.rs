@@ -11,27 +11,27 @@ use std::path::Path;
 const MARKDOWN_URL_PATTERN: &str =
     r#"(http://|https://)[a-z0-9]+([-.]{1}[a-z0-9]+)*(.[a-z]{2,5})?(:[0-9]{1,5})?(/.*)?"#;
 
-pub trait UrlFinder {
+pub trait FindUrls {
     fn find_urls(&self, paths: Vec<&Path>) -> io::Result<Vec<UrlLocation>>;
 }
 
 #[derive(Default)]
-pub struct Finder {}
+pub struct UrlFinder {}
 
-impl UrlFinder for Finder {
+impl FindUrls for UrlFinder {
     fn find_urls(&self, paths: Vec<&Path>) -> io::Result<Vec<UrlLocation>> {
         let result = paths
             .into_iter()
             .flat_map(|path| {
                 // TODO: Don't panic here but instead let Error propagate in return Result
-                Finder::parse_lines_with_urls(path).unwrap_or_else(|_| {
+                UrlFinder::parse_lines_with_urls(path).unwrap_or_else(|_| {
                     panic!(
                         "Something went wrong parsing URL in file: {}",
                         path.display()
                     )
                 })
             })
-            .flat_map(Finder::parse_urls)
+            .flat_map(UrlFinder::parse_urls)
             .collect();
 
         Ok(result)
@@ -40,7 +40,7 @@ impl UrlFinder for Finder {
 
 type UrlMatch = (String, String, u64);
 
-impl Finder {
+impl UrlFinder {
     fn parse_lines_with_urls(path: &Path) -> io::Result<Vec<UrlMatch>> {
         let matcher = RegexMatcher::new(MARKDOWN_URL_PATTERN).unwrap();
 
@@ -103,7 +103,7 @@ mod tests {
                 file_name: "this-file-name".to_string(),
             },
         ];
-        let actual = Finder::parse_urls(url_match);
+        let actual = UrlFinder::parse_urls(url_match);
 
         assert_eq!(actual, expected);
     }
@@ -118,7 +118,7 @@ mod tests {
             line: 99,
             file_name: "this-file-name".to_string(),
         }];
-        let actual = Finder::parse_urls(url_match);
+        let actual = UrlFinder::parse_urls(url_match);
 
         assert_eq!(actual, expected);
     }
@@ -133,7 +133,7 @@ mod tests {
             line: 99,
             file_name: "this-file-name".to_string(),
         }];
-        let actual = Finder::parse_urls(url_match);
+        let actual = UrlFinder::parse_urls(url_match);
 
         assert_eq!(actual, expected);
     }
@@ -150,7 +150,7 @@ mod tests {
                 .as_bytes(),
         )?;
 
-        let actual = Finder::parse_lines_with_urls(file.path())?;
+        let actual = UrlFinder::parse_lines_with_urls(file.path())?;
 
         let actual_match1 = actual.get(0).unwrap().to_owned();
         let actual_match2 = actual.get(1).unwrap().to_owned();
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn test_parse_lines_with_urls__from_file__when_non_existing_file() {
         let non_existing_file = "non_existing_file.txt";
-        let is_err = Finder::parse_lines_with_urls(non_existing_file.as_ref()).is_err();
+        let is_err = UrlFinder::parse_lines_with_urls(non_existing_file.as_ref()).is_err();
 
         assert!(is_err);
     }
