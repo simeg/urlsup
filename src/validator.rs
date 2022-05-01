@@ -17,7 +17,7 @@ pub trait ValidateUrls {
 }
 
 #[derive(Default)]
-pub struct Validator {}
+pub struct UrlValidator {}
 
 #[derive(Debug, Eq, Clone)]
 pub struct ValidationResult {
@@ -83,7 +83,7 @@ impl fmt::Display for ValidationResult {
 }
 
 #[async_trait]
-impl ValidateUrls for Validator {
+impl ValidateUrls for UrlValidator {
     async fn validate_urls(
         &self,
         urls: Vec<UrlLocation>,
@@ -96,6 +96,7 @@ impl ValidateUrls for Validator {
             .timeout(opts.timeout)
             .redirect(redirect_policy)
             .user_agent(user_agent)
+            .default_headers()
             .build()
             .unwrap();
 
@@ -221,13 +222,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_urls__handles_url_with_status_code() {
-        let validator = Validator::default();
+        let validator = UrlValidator::default();
         let opts = UrlsUpOptions {
             allow_list: None,
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
+            output_to_file: false,
         };
         let _m = mock("GET", "/200").with_status(200).create();
         let endpoint = mockito::server_url() + "/200";
@@ -251,13 +253,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_urls__handles_not_available_url() {
-        let validator = Validator::default();
+        let validator = UrlValidator::default();
         let opts = UrlsUpOptions {
             allow_list: None,
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
+            output_to_file: false,
         };
         let endpoint = "https://localhost.urls_up".to_string();
 
@@ -284,13 +287,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_urls__timeout_reached() {
-        let validator = Validator::default();
+        let validator = UrlValidator::default();
         let opts = UrlsUpOptions {
             allow_list: None,
             timeout: Duration::from_nanos(1), // Use very small timeout
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
+            output_to_file: false,
         };
         let _m = mock("GET", "/200").with_status(200).create();
         let endpoint = mockito::server_url() + "/200";
@@ -313,13 +317,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_urls__works() -> TestResult {
-        let validator = Validator::default();
+        let validator = UrlValidator::default();
         let opts = UrlsUpOptions {
             allow_list: None,
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
+            output_to_file: false,
         };
         let _m200 = mock("GET", "/200").with_status(200).create();
         let _m404 = mock("GET", "/404").with_status(404).create();

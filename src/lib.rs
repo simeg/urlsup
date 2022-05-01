@@ -1,18 +1,28 @@
 use spinners::{Spinner, Spinners};
 
-use crate::finder::{Finder, UrlFinder};
-use crate::validator::{ValidateUrls, ValidationResult, Validator};
+use crate::finder::FindUrls;
+use crate::formatter::FormatValidationResults;
+use crate::printer::WriteToFile;
+use crate::validator::{ValidateUrls, ValidationResult};
+
 use std::cmp::Ordering;
+
 use std::io;
+use std::io::Error;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::time::Duration;
 
 pub mod finder;
+pub mod formatter;
+pub mod printer;
 pub mod validator;
 
-pub struct UrlsUp {
-    finder: Finder,
-    validator: Validator,
+pub struct UrlsUp<FU: FindUrls, V: ValidateUrls, W: WriteToFile, FVR: FormatValidationResults> {
+    finder: FU,
+    validator: V,
+    writer: W,
+    formatter: FVR,
 }
 
 pub struct UrlsUpOptions {
@@ -26,6 +36,8 @@ pub struct UrlsUpOptions {
     pub thread_count: usize,
     // Allow requests to time out
     pub allow_timeout: bool,
+    // Output results to file
+    pub output_to_file: bool,
 }
 
 #[derive(Debug, Eq, Clone)]
@@ -61,9 +73,20 @@ impl PartialEq for UrlLocation {
     }
 }
 
-impl UrlsUp {
-    pub fn new(finder: Finder, validator: Validator) -> Self {
-        Self { finder, validator }
+impl<FU, V, W, FVR> UrlsUp<FU, V, W, FVR>
+where
+    FU: FindUrls,
+    V: ValidateUrls,
+    W: WriteToFile,
+    FVR: FormatValidationResults,
+{
+    pub fn new(finder: FU, validator: V, writer: W, formatter: FVR) -> Self {
+        Self {
+            finder,
+            validator,
+            writer,
+            formatter,
+        }
     }
 
     pub async fn run(
@@ -160,7 +183,22 @@ impl UrlsUp {
             sp.stop();
         }
 
-        Ok(non_ok_urls)
+        if opts.output_to_file {
+            let json = self.formatter.format(&non_ok_urls)?;
+            self.writer
+                .write_to_file(Path::new("/tmp/urlsup-todo"), json)?;
+            Ok(non_ok_urls)
+        } else if non_ok_urls.is_empty() {
+            println!("\n\n> No issues!");
+            Ok(non_ok_urls)
+        } else {
+            let mut err_msg = vec!["\n\n> Issues".to_string()];
+            for (i, vr) in non_ok_urls.iter().enumerate() {
+                err_msg.push(format!("{:4}. {}", i + 1, vr));
+            }
+
+            Err(Error::new(ErrorKind::Other, err_msg.join("\n")))
+        }
     }
 
     fn apply_allow_list(
@@ -239,10 +277,19 @@ mod tests {
     #![allow(non_snake_case)]
 
     use super::*;
+    use crate::finder::UrlFinder;
+    use crate::formatter::JsonFormatter;
+    use crate::printer::Writer;
+    use crate::validator::UrlValidator;
 
     #[test]
     fn test_dedup() {
-        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+        let urls_up = UrlsUp::new(
+            UrlFinder::default(),
+            UrlValidator::default(),
+            Writer::default(),
+            JsonFormatter::default(),
+        );
         let duplicate = vec![
             UrlLocation {
                 url: "duplicate".to_string(),
@@ -290,7 +337,12 @@ mod tests {
 
     #[test]
     fn test_apply_allow_list__filters_out_allow_listed_urls() {
-        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+        let urls_up = UrlsUp::new(
+            UrlFinder::default(),
+            UrlValidator::default(),
+            Writer::default(),
+            JsonFormatter::default(),
+        );
         let urls = vec![
             UrlLocation {
                 url: "http://should-keep.com".to_string(),
@@ -327,7 +379,12 @@ mod tests {
 
     #[test]
     fn test_filter_allowed_status_codes__removes_allowed_status_codes() {
-        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+        let urls_up = UrlsUp::new(
+            UrlFinder::default(),
+            UrlValidator::default(),
+            Writer::default(),
+            JsonFormatter::default(),
+        );
         let vr1 = ValidationResult {
             url: "keep-this".to_string(),
             line: 0, // arbitrary
@@ -372,7 +429,12 @@ mod tests {
 
     #[test]
     fn test_filter_timeouts__removes_timeouts() {
-        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+        let urls_up = UrlsUp::new(
+            UrlFinder::default(),
+            UrlValidator::default(),
+            Writer::default(),
+            JsonFormatter::default(),
+        );
         let vr1 = ValidationResult {
             url: "keep-this".to_string(),
             line: 0, // arbitrary
@@ -421,6 +483,10 @@ mod it_tests {
     #![allow(non_snake_case)]
 
     use super::*;
+    use crate::finder::UrlFinder;
+    use crate::formatter::JsonFormatter;
+    use crate::printer::Writer;
+    use crate::validator::UrlValidator;
     use mockito::mock;
     use std::io::Write;
 
@@ -428,13 +494,19 @@ mod it_tests {
 
     #[tokio::test]
     async fn test_run__has_no_issues() -> TestResult {
-        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+        let urls_up = UrlsUp::new(
+            UrlFinder::default(),
+            UrlValidator::default(),
+            Writer::default(),
+            JsonFormatter::default(),
+        );
         let opts = UrlsUpOptions {
             allow_list: None,
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
+            output_to_file: false,
         };
         let _m = mock("GET", "/200").with_status(200).create();
         let endpoint = mockito::server_url() + "/200";
@@ -449,40 +521,55 @@ mod it_tests {
 
     #[tokio::test]
     async fn test_run__has_issues() -> TestResult {
-        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+        let urls_up = UrlsUp::new(
+            UrlFinder::default(),
+            UrlValidator::default(),
+            Writer::default(),
+            JsonFormatter::default(),
+        );
         let opts = UrlsUpOptions {
             allow_list: None,
             timeout: Duration::from_secs(10),
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
+            output_to_file: false,
         };
         let _m = mock("GET", "/404").with_status(404).create();
         let endpoint = mockito::server_url() + "/404";
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 
-        let result = urls_up.run(vec![file.path()], opts).await?;
+        let result = urls_up.run(vec![file.path()], opts).await;
 
-        assert!(!result.is_empty());
-
-        let actual = result.first().unwrap();
-
-        assert_eq!(actual.description, None);
-        assert_eq!(actual.url, "http://127.0.0.1:1234/404".to_string());
-        assert_eq!(actual.status_code, Some(404));
+        assert!(result.is_err());
         Ok(())
+        //
+        // assert!(!result.is_empty());
+        //
+        // let actual = result.first().unwrap();
+        //
+        // assert_eq!(actual.description, None);
+        // assert_eq!(actual.url, "http://127.0.0.1:1234/404".to_string());
+        // assert_eq!(actual.status_code, Some(404));
+        // Ok(())
     }
 
     #[tokio::test]
     async fn test_run__issues_when_timeout_reached() -> TestResult {
-        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+        let urls_up = UrlsUp::new(
+            UrlFinder::default(),
+            UrlValidator::default(),
+            Writer::default(),
+            JsonFormatter::default(),
+        );
         let opts = UrlsUpOptions {
             allow_list: None,
             timeout: Duration::from_nanos(1), // Use very small timeout
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
+            output_to_file: false,
         };
         let _m = mock("GET", "/200").with_status(200).create();
         let endpoint = mockito::server_url() + "/200";
@@ -503,13 +590,19 @@ mod it_tests {
 
     #[tokio::test]
     async fn test_run__no_issues_when_timeout_reached_and_allow_timeout() -> TestResult {
-        let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+        let urls_up = UrlsUp::new(
+            UrlFinder::default(),
+            UrlValidator::default(),
+            Writer::default(),
+            JsonFormatter::default(),
+        );
         let opts = UrlsUpOptions {
             allow_list: None,
             timeout: Duration::from_nanos(1), // Use very small timeout
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: true,
+            output_to_file: false,
         };
         let _m = mock("GET", "/200").with_status(200).create();
         let endpoint = mockito::server_url() + "/200";

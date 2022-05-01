@@ -4,6 +4,7 @@ extern crate clap;
 extern crate async_trait;
 extern crate futures;
 extern crate grep;
+extern crate json_value_merge;
 extern crate linkify;
 extern crate num_cpus;
 extern crate reqwest;
@@ -11,13 +12,15 @@ extern crate spinners;
 extern crate term;
 
 use clap::{Arg, Command};
-use urlsup::finder::Finder;
-use urlsup::validator::Validator;
+use urlsup::finder::UrlFinder;
+use urlsup::validator::UrlValidator;
 use urlsup::{UrlsUp, UrlsUpOptions};
 
 use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
+use urlsup::formatter::JsonFormatter;
+use urlsup::printer::Writer;
 
 const OPT_FILES: &str = "FILES";
 const OPT_ALLOW_LIST: &str = "allow-list";
@@ -25,6 +28,7 @@ const OPT_TIMEOUT: &str = "timeout";
 const OPT_ALLOW_STATUS: &str = "allow-status";
 const OPT_THREADS: &str = "threads";
 const OPT_ALLOW_TIMEOUT: &str = "allow-timeout";
+const OPT_OUTPUT_TO_FILE: &str = "output-to-file";
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -72,6 +76,12 @@ async fn main() {
         .takes_value(false)
         .required(false);
 
+    let opt_output_to_file = Arg::new(OPT_OUTPUT_TO_FILE)
+        .help("Output results to file (urlsup-result.json)")
+        .long(OPT_OUTPUT_TO_FILE)
+        .takes_value(false)
+        .required(false);
+
     let matches = Command::new("urls_up")
         .version(crate_version!())
         .author(crate_authors!())
@@ -82,15 +92,22 @@ async fn main() {
         .arg(opt_allow)
         .arg(opt_threads)
         .arg(opt_allow_timeout)
+        .arg(opt_output_to_file)
         .get_matches();
 
-    let urls_up = UrlsUp::new(Finder::default(), Validator::default());
+    let urls_up = UrlsUp::new(
+        UrlFinder::default(),
+        UrlValidator::default(),
+        Writer::default(),
+        JsonFormatter::default(),
+    );
     let mut opts = UrlsUpOptions {
         allow_list: None,
         timeout: DEFAULT_TIMEOUT,
         allowed_status_codes: None,
         thread_count: num_cpus::get(),
         allow_timeout: matches.is_present(OPT_ALLOW_TIMEOUT),
+        output_to_file: matches.is_present(OPT_OUTPUT_TO_FILE),
     };
 
     if let Some(allow_list_urls) = matches.value_of(OPT_ALLOW_LIST) {
@@ -136,19 +153,11 @@ async fn main() {
         let paths = files.map(Path::new).collect::<Vec<&Path>>();
 
         match urls_up.run(paths, opts).await {
-            Ok(result) => {
-                if result.is_empty() {
-                    println!("\n\n> No issues!");
-                } else {
-                    println!("\n\n> Issues");
-                    for (i, validation_result) in result.iter().enumerate() {
-                        println!("{:4}. {}", i + 1, validation_result);
-                    }
-
-                    std::process::exit(1)
-                }
+            Ok(_) => std::process::exit(0),
+            Err(e) => {
+                println!("{}", e);
+                std::process::exit(1)
             }
-            Err(e) => panic!("{}", e),
         }
     }
 }
