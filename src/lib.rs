@@ -121,7 +121,7 @@ impl UrlsUp {
         // Deduplicate URLs to avoid duplicate work
         let dedup_urls = self.dedup(url_locations);
 
-        if let Some(sp) = spinner_find_urls {
+        if let Some(mut sp) = spinner_find_urls {
             sp.stop();
         }
 
@@ -156,7 +156,7 @@ impl UrlsUp {
             non_ok_urls = self.filter_timeouts(non_ok_urls);
         }
 
-        if let Some(sp) = validation_spinner {
+        if let Some(mut sp) = validation_spinner {
             sp.stop();
         }
 

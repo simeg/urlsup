@@ -18,15 +18,15 @@ include = [
 ]
 
 [dependencies]
-async-trait = "0.1.52"
-clap = { version = "3.1.6", default-features = false, features = ["std", "cargo"] }
-reqwest = "0.11.9"
-tokio = { version = "1.17.0", features = ["macros", "rt-multi-thread"] }
+async-trait = "0.1.53"
+clap = { version = "3.1.14", default-features = false, features = ["std", "cargo"] }
+reqwest = "0.11.10"
+tokio = { version = "1.18.0", features = ["macros", "rt-multi-thread"] }
 futures = "0.3.21"
 grep = "0.2.8"
-linkify = "0.8.0"
+linkify = "0.8.1"
 num_cpus = "1.13.1"
-spinners = "3.0.1"
+spinners = "4.0.0"
 term = "0.7.0"
 
 [dev-dependencies]
