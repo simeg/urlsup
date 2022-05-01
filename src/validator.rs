@@ -5,7 +5,7 @@ use reqwest::redirect::Policy;
 use crate::{UrlLocation, UrlsUpOptions};
 
 use std::cmp::Ordering;
-use std::fmt;
+use std::{env, fmt};
 
 #[async_trait]
 pub trait ValidateUrls {
@@ -103,7 +103,12 @@ impl ValidateUrls for Validator {
             .map(|ul| {
                 let client = &client;
                 async move {
-                    let response = client.get(&ul.url).send().await;
+                    let response = client
+                        .get(&ul.url)
+                        .header("content-type", "application/json")
+                        .bearer_auth(&Self::get_github_token())
+                        .send()
+                        .await;
                     (ul.clone(), response)
                 }
             })
@@ -134,6 +139,12 @@ impl ValidateUrls for Validator {
         }
 
         result
+    }
+}
+
+impl Validator {
+    fn get_github_token() -> String {
+        env::var("GITHUB_TOKEN").unwrap_or_default()
     }
 }
 
@@ -284,6 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_urls__timeout_reached() {
+        env::set_var("GITHUB_TOKEN", "arbitrary");
         let validator = Validator::default();
         let opts = UrlsUpOptions {
             allow_list: None,

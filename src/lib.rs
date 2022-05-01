@@ -422,6 +422,7 @@ mod it_tests {
 
     use super::*;
     use mockito::mock;
+    use std::env;
     use std::io::Write;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -503,6 +504,7 @@ mod it_tests {
 
     #[tokio::test]
     async fn test_run__no_issues_when_timeout_reached_and_allow_timeout() -> TestResult {
+        env::set_var("GITHUB_TOKEN", "arbitrary");
         let urls_up = UrlsUp::new(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
             allow_list: None,
