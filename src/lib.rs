@@ -121,7 +121,7 @@ impl UrlsUp {
         // Deduplicate URLs to avoid duplicate work
         let dedup_urls = self.dedup(url_locations);
 
-        if let Some(sp) = spinner_find_urls {
+        if let Some(mut sp) = spinner_find_urls {
             sp.stop();
         }
 
@@ -156,7 +156,7 @@ impl UrlsUp {
             non_ok_urls = self.filter_timeouts(non_ok_urls);
         }
 
-        if let Some(sp) = validation_spinner {
+        if let Some(mut sp) = validation_spinner {
             sp.stop();
         }
 
@@ -228,7 +228,7 @@ impl UrlsUp {
         if term::stdout().is_some() {
             Some(Spinner::new(Spinners::Dots, msg))
         } else {
-            println!("{}", msg);
+            println!("{msg}");
             None
         }
     }
@@ -421,7 +421,7 @@ mod it_tests {
     #![allow(non_snake_case)]
 
     use super::*;
-    use mockito::mock;
+    use mockito::Server;
     use std::io::Write;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -436,8 +436,9 @@ mod it_tests {
             thread_count: 1,
             allow_timeout: false,
         };
-        let _m = mock("GET", "/200").with_status(200).create();
-        let endpoint = mockito::server_url() + "/200";
+        let mut server = Server::new_async().await;
+        let _m = server.mock("GET", "/200").with_status(200).create();
+        let endpoint = server.url() + "/200";
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 
@@ -457,8 +458,9 @@ mod it_tests {
             thread_count: 1,
             allow_timeout: false,
         };
-        let _m = mock("GET", "/404").with_status(404).create();
-        let endpoint = mockito::server_url() + "/404";
+        let mut server = Server::new_async().await;
+        let _m = server.mock("GET", "/404").with_status(404).create();
+        let endpoint = server.url() + "/404";
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 
@@ -469,7 +471,7 @@ mod it_tests {
         let actual = result.first().unwrap();
 
         assert_eq!(actual.description, None);
-        assert_eq!(actual.url, "http://127.0.0.1:1234/404".to_string());
+        assert_eq!(actual.url, endpoint);
         assert_eq!(actual.status_code, Some(404));
         Ok(())
     }
@@ -479,13 +481,13 @@ mod it_tests {
         let urls_up = UrlsUp::new(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: Duration::from_nanos(1), // Use very small timeout
+            timeout: Duration::from_millis(1), // Use very small timeout
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
         };
-        let _m = mock("GET", "/200").with_status(200).create();
-        let endpoint = mockito::server_url() + "/200";
+        // Use an unreachable address to trigger timeout
+        let endpoint = "http://192.0.2.1:80/200".to_string(); // RFC 5737 TEST-NET-1 address
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 
@@ -496,7 +498,7 @@ mod it_tests {
         let actual = result.first().unwrap();
 
         assert_eq!(actual.description, Some("operation timed out".to_string()));
-        assert_eq!(actual.url, "http://127.0.0.1:1234/200".to_string());
+        assert_eq!(actual.url, endpoint);
         assert_eq!(actual.status_code, None);
         Ok(())
     }
@@ -506,13 +508,13 @@ mod it_tests {
         let urls_up = UrlsUp::new(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: Duration::from_nanos(1), // Use very small timeout
+            timeout: Duration::from_millis(1), // Use very small timeout
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: true,
         };
-        let _m = mock("GET", "/200").with_status(200).create();
-        let endpoint = mockito::server_url() + "/200";
+        // Use an unreachable address to trigger timeout
+        let endpoint = "http://192.0.2.1:80/200".to_string(); // RFC 5737 TEST-NET-1 address
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
 

@@ -1,7 +1,5 @@
-extern crate urlsup;
-#[macro_use]
-extern crate clap;
 extern crate async_trait;
+extern crate clap;
 extern crate futures;
 extern crate grep;
 extern crate linkify;
@@ -9,13 +7,13 @@ extern crate num_cpus;
 extern crate reqwest;
 extern crate spinners;
 extern crate term;
+extern crate urlsup;
 
-use clap::{Arg, Command};
+use clap::{Arg, ArgAction, Command};
 use urlsup::finder::Finder;
 use urlsup::validator::Validator;
 use urlsup::{UrlsUp, UrlsUpOptions};
 
-use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 
@@ -32,9 +30,8 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 async fn main() {
     let opt_word = Arg::new(OPT_FILES)
         .help("Files to check")
-        .validator_os(exists_on_filesystem)
-        .takes_value(true)
-        .multiple_values(true)
+        .action(ArgAction::Append)
+        .num_args(1)
         .required(true)
         .index(1);
 
@@ -43,7 +40,7 @@ async fn main() {
         .short('w')
         .long(OPT_WHITE_LIST)
         .value_name("urls")
-        .takes_value(true)
+        .action(ArgAction::Set)
         .required(false);
 
     let opt_timeout = Arg::new(OPT_TIMEOUT)
@@ -51,7 +48,7 @@ async fn main() {
         .short('t')
         .long(OPT_TIMEOUT)
         .value_name("seconds")
-        .takes_value(true)
+        .action(ArgAction::Set)
         .required(false);
 
     let opt_allow = Arg::new(OPT_ALLOW)
@@ -59,26 +56,27 @@ async fn main() {
         .short('a')
         .long(OPT_ALLOW)
         .value_name("status codes")
-        .takes_value(true)
+        .action(ArgAction::Set)
         .required(false);
 
     let opt_threads = Arg::new(OPT_THREADS)
         .help("Thread count for making requests (default: CPU core count)")
         .long(OPT_THREADS)
         .value_name("thread count")
-        .takes_value(true)
+        .action(ArgAction::Set)
         .required(false);
 
     let opt_allow_timeout = Arg::new(OPT_ALLOW_TIMEOUT)
         .help("URLs that time out are allowed")
         .long(OPT_ALLOW_TIMEOUT)
-        .takes_value(false)
+        .action(ArgAction::SetTrue)
+        .num_args(0)
         .required(false);
 
-    let matches = Command::new("urls_up")
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about(crate_description!())
+    let matches = Command::new("urlsup")
+        .version("1.0.1")
+        .author("Simon Egersand <s.egersand@gmail.com>")
+        .about("CLI to validate URLs in files")
         .arg(opt_word)
         .arg(opt_white_list)
         .arg(opt_timeout)
@@ -93,10 +91,10 @@ async fn main() {
         timeout: DEFAULT_TIMEOUT,
         allowed_status_codes: None,
         thread_count: num_cpus::get(),
-        allow_timeout: matches.is_present(OPT_ALLOW_TIMEOUT),
+        allow_timeout: matches.get_flag(OPT_ALLOW_TIMEOUT),
     };
 
-    if let Some(white_list_urls) = matches.value_of(OPT_WHITE_LIST) {
+    if let Some(white_list_urls) = matches.get_one::<String>(OPT_WHITE_LIST) {
         let white_list: Vec<String> = white_list_urls
             .split(',')
             .filter_map(|s| match s.is_empty() {
@@ -107,15 +105,15 @@ async fn main() {
         opts.white_list = Some(white_list);
     }
 
-    if let Some(str_timeout) = matches.value_of(OPT_TIMEOUT) {
+    if let Some(str_timeout) = matches.get_one::<String>(OPT_TIMEOUT) {
         let timeout: Duration = str_timeout
             .parse()
             .map(Duration::from_secs)
-            .unwrap_or_else(|_| panic!("Could not parse {} into an int (u64)", str_timeout));
+            .unwrap_or_else(|_| panic!("Could not parse {str_timeout} into an int (u64)"));
         opts.timeout = timeout;
     }
 
-    if let Some(allowed_status_codes) = matches.value_of(OPT_ALLOW) {
+    if let Some(allowed_status_codes) = matches.get_one::<String>(OPT_ALLOW) {
         let allowed: Vec<u16> = allowed_status_codes
             .split(',')
             .filter_map(|s| match s.is_empty() {
@@ -129,14 +127,26 @@ async fn main() {
         opts.allowed_status_codes = Some(allowed);
     }
 
-    if let Some(thread_count) = matches.value_of(OPT_THREADS) {
+    if let Some(thread_count) = matches.get_one::<String>(OPT_THREADS) {
         opts.thread_count = thread_count
             .parse::<usize>()
-            .unwrap_or_else(|_| panic!("Could not parse {} into an int (usize)", thread_count));
+            .unwrap_or_else(|_| panic!("Could not parse {thread_count} into an int (usize)"));
     }
 
-    if let Some(files) = matches.values_of(OPT_FILES) {
+    if let Some(files) = matches.get_many::<String>(OPT_FILES) {
         let paths = files.map(Path::new).collect::<Vec<&Path>>();
+
+        // Validate files exist
+        for path in &paths {
+            if !path.exists() {
+                eprintln!(
+                    "error: invalid value '{}' for '<FILES>...': File not found [\"{}\"]\n\nFor more information, try '--help'.",
+                    path.display(),
+                    path.display()
+                );
+                std::process::exit(2);
+            }
+        }
 
         match urls_up.run(paths, opts).await {
             Ok(result) => {
@@ -153,12 +163,8 @@ async fn main() {
             }
             Err(e) => panic!("{}", e),
         }
-    }
-}
-
-fn exists_on_filesystem(path: &OsStr) -> Result<(), String> {
-    match Some(path).map(Path::new).map(Path::exists).unwrap_or(false) {
-        true => Ok(()),
-        false => Err(format!("File not found [{:?}]", path)),
+    } else {
+        eprintln!("No files provided");
+        std::process::exit(1);
     }
 }

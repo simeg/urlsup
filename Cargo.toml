@@ -10,7 +10,7 @@ homepage = "https://github.com/simeg/urlsup"
 documentation = "https://github.com/simeg/urlsup/blob/master/README.md"
 readme = "README.md"
 license = "MIT"
-edition = "2021"
+edition = "2024"
 include = [
 	"src/**/*",
 	"Cargo.toml",
@@ -18,19 +18,19 @@ include = [
 ]
 
 [dependencies]
-async-trait = "0.1.52"
-clap = { version = "3.1.6", default-features = false, features = ["std", "cargo"] }
-reqwest = "0.11.9"
-tokio = { version = "1.17.0", features = ["macros", "rt-multi-thread"] }
-futures = "0.3.21"
-grep = "0.2.8"
-linkify = "0.8.0"
-num_cpus = "1.13.1"
-spinners = "3.0.1"
-term = "0.7.0"
+async-trait = "0.1"
+clap = { version = "4.5", default-features = false, features = ["std", "cargo", "help", "usage", "error-context"] }
+reqwest = "0.12"
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread"] }
+futures = "0.3"
+grep = "0.3"
+linkify = "0.10"
+num_cpus = "1.17"
+spinners = "4.1"
+term = "1.1"
 
 [dev-dependencies]
-tempfile = "3.3.0"
-mockito = "0.31.0"
-assert_cmd = "2.0.4"
-predicates = "2.1.1"
+tempfile = "3.20"
+mockito = "1.7"
+assert_cmd = "2.0"
+predicates = "3.1"

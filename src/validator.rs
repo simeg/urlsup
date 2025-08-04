@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 use reqwest::redirect::Policy;
 
 use crate::{UrlLocation, UrlsUpOptions};
@@ -142,7 +142,7 @@ mod tests {
     #![allow(non_snake_case)]
 
     use super::*;
-    use mockito::mock;
+    use mockito::Server;
     use std::io::Write;
     use std::time::Duration;
 
@@ -229,8 +229,9 @@ mod tests {
             thread_count: 1,
             allow_timeout: false,
         };
-        let _m = mock("GET", "/200").with_status(200).create();
-        let endpoint = mockito::server_url() + "/200";
+        let mut server = Server::new_async().await;
+        let _m = server.mock("GET", "/200").with_status(200).create();
+        let endpoint = server.url() + "/200";
 
         let results = validator
             .validate_urls(
@@ -275,11 +276,13 @@ mod tests {
 
         assert_eq!(actual.url, endpoint);
         assert_eq!(actual.status_code, None);
-        assert!(actual
-            .description
-            .as_ref()
-            .unwrap()
-            .contains("error trying to connect: dns error: failed to lookup address information:"));
+        assert!(
+            actual
+                .description
+                .as_ref()
+                .unwrap()
+                .contains("client error (Connect)")
+        );
     }
 
     #[tokio::test]
@@ -287,13 +290,13 @@ mod tests {
         let validator = Validator::default();
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: Duration::from_nanos(1), // Use very small timeout
+            timeout: Duration::from_millis(1), // Use very small timeout
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
         };
-        let _m = mock("GET", "/200").with_status(200).create();
-        let endpoint = mockito::server_url() + "/200";
+        // Use an unreachable address to trigger timeout
+        let endpoint = "http://192.0.2.1:80/200".to_string(); // RFC 5737 TEST-NET-1 address
 
         let results = validator
             .validate_urls(
@@ -321,10 +324,11 @@ mod tests {
             thread_count: 1,
             allow_timeout: false,
         };
-        let _m200 = mock("GET", "/200").with_status(200).create();
-        let _m404 = mock("GET", "/404").with_status(404).create();
-        let endpoint_200 = mockito::server_url() + "/200";
-        let endpoint_404 = mockito::server_url() + "/404";
+        let mut server = Server::new_async().await;
+        let _m200 = server.mock("GET", "/200").with_status(200).create();
+        let _m404 = server.mock("GET", "/404").with_status(404).create();
+        let endpoint_200 = server.url() + "/200";
+        let endpoint_404 = server.url() + "/404";
         let endpoint_non_existing = "https://localhost.urls_up".to_string();
 
         let mut file = tempfile::NamedTempFile::new()?;
@@ -371,11 +375,13 @@ mod tests {
 
         assert_eq!(actual[2].url, endpoint_non_existing);
         assert_eq!(actual[2].status_code, None);
-        assert!(actual[2]
-            .description
-            .as_ref()
-            .unwrap()
-            .contains("error trying to connect: dns error: failed to lookup address information:"));
+        assert!(
+            actual[2]
+                .description
+                .as_ref()
+                .unwrap()
+                .contains("client error (Connect)")
+        );
 
         Ok(())
     }

@@ -1,6 +1,6 @@
 use grep::regex::RegexMatcher;
-use grep::searcher::sinks::UTF8;
 use grep::searcher::Searcher;
+use grep::searcher::sinks::UTF8;
 use linkify::{LinkFinder, LinkKind};
 
 use crate::UrlLocation;
@@ -47,7 +47,7 @@ impl Finder {
         let mut matches = vec![];
         Searcher::new().search_path(
             &matcher,
-            &path,
+            path,
             UTF8(|line_number, line| {
                 let file_name = path.display().to_string();
                 let url_match: UrlMatch = (line.to_string(), file_name, line_number);

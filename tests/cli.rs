@@ -2,7 +2,7 @@ mod cli {
     #![allow(non_snake_case)]
 
     use assert_cmd::prelude::*;
-    use mockito::mock;
+    use mockito::Server;
     use predicates::str::{contains, ends_with, starts_with};
 
     use std::io::Write;
@@ -18,15 +18,16 @@ mod cli {
 
         cmd.assert().failure();
         cmd.assert().failure().stderr(contains(
-            "error: The following required arguments were not provided:\n    <FILES>...",
+            "error: the following required arguments were not provided:\n  <FILES>...",
         ));
         Ok(())
     }
 
     #[tokio::test]
     async fn test_output__when_no_issues() -> TestResult {
-        let _m200 = mock("GET", "/200").with_status(200).create();
-        let endpoint = mockito::server_url() + "/200";
+        let mut server = Server::new_async().await;
+        let _m200 = server.mock("GET", "/200").with_status(200).create();
+        let endpoint = server.url() + "/200";
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
@@ -42,8 +43,9 @@ mod cli {
 
     #[tokio::test]
     async fn test_output__when_single_issue() -> TestResult {
-        let _m404 = mock("GET", "/404").with_status(404).create();
-        let endpoint = mockito::server_url() + "/404";
+        let mut server = Server::new_async().await;
+        let _m404 = server.mock("GET", "/404").with_status(404).create();
+        let endpoint = server.url() + "/404";
         let mut file = tempfile::NamedTempFile::new()?;
         let file_name = file.path().display().to_string();
         file.write_all(endpoint.as_bytes())?;
@@ -56,7 +58,8 @@ mod cli {
             .failure()
             .stdout(contains("Found 1 unique URL(s), 1 in total"));
         cmd.assert().failure().stdout(ends_with(format!(
-            "> Issues\n   1. 404 - http://127.0.0.1:1234/404 - {} - L1\n",
+            "> Issues\n   1. 404 - {}/404 - {} - L1\n",
+            server.url(),
             file_name
         )));
         Ok(())
@@ -64,10 +67,11 @@ mod cli {
 
     #[tokio::test]
     async fn test_output__when_multiple_issues() -> TestResult {
-        let _m404 = mock("GET", "/404").with_status(404).create();
-        let _m401 = mock("GET", "/401").with_status(401).create();
-        let endpoint_404 = mockito::server_url() + "/404";
-        let endpoint_401 = mockito::server_url() + "/401";
+        let mut server = Server::new_async().await;
+        let _m404 = server.mock("GET", "/404").with_status(404).create();
+        let _m401 = server.mock("GET", "/401").with_status(401).create();
+        let endpoint_404 = server.url() + "/404";
+        let endpoint_401 = server.url() + "/401";
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(format!("{} {}", endpoint_404, endpoint_401).as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
@@ -82,45 +86,51 @@ mod cli {
         // Order is not deterministic so can't assert it
         cmd.assert()
             .failure()
-            .stdout(contains("404 - http://127.0.0.1:1234/404"));
+            .stdout(contains(&format!("404 - {}/404", server.url())));
         cmd.assert()
             .failure()
-            .stdout(contains("401 - http://127.0.0.1:1234/401"));
+            .stdout(contains(&format!("401 - {}/401", server.url())));
         Ok(())
     }
 
     #[tokio::test]
     async fn test_output__when_white_list_provided() -> TestResult {
-        let _m200 = mock("GET", "/200").with_status(200).create();
-        let _m401 = mock("GET", "/401").with_status(401).create();
-        let _m404 = mock("GET", "/404").with_status(404).create();
-        let endpoint_200 = mockito::server_url() + "/200";
-        let endpoint_401 = mockito::server_url() + "/401";
-        let endpoint_404 = mockito::server_url() + "/404";
+        let mut server = Server::new_async().await;
+        let _m200 = server.mock("GET", "/200").with_status(200).create();
+        let _m401 = server.mock("GET", "/401").with_status(401).create();
+        let _m404 = server.mock("GET", "/404").with_status(404).create();
+        let endpoint_200 = server.url() + "/200";
+        let endpoint_401 = server.url() + "/401";
+        let endpoint_404 = server.url() + "/404";
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(format!("{} {} {}", endpoint_200, endpoint_401, endpoint_404).as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
-        cmd.arg(file.path())
-            .arg("--white-list")
-            .arg("http://127.0.0.1:1234/401,http://127.0.0.1:1234/404");
+        cmd.arg(file.path()).arg("--white-list").arg(&format!(
+            "{}/401,{}/404",
+            server.url(),
+            server.url()
+        ));
 
         cmd.assert().success();
-        cmd.assert()
-            .success()
-            .stdout(contains("Ignoring white listed URL(s)\n   1. http://127.0.0.1:1234/401\n   2. http://127.0.0.1:1234/404"));
+        cmd.assert().success().stdout(contains(&format!(
+            "Ignoring white listed URL(s)\n   1. {}/401\n   2. {}/404",
+            server.url(),
+            server.url()
+        )));
         cmd.assert().success().stdout(ends_with("No issues!\n"));
         Ok(())
     }
 
     #[tokio::test]
     async fn test_output__when_allowed_statuses_provided() -> TestResult {
-        let _m200 = mock("GET", "/200").with_status(200).create();
-        let _m401 = mock("GET", "/401").with_status(401).create();
-        let _m404 = mock("GET", "/404").with_status(404).create();
-        let endpoint_200 = mockito::server_url() + "/200";
-        let endpoint_401 = mockito::server_url() + "/401";
-        let endpoint_404 = mockito::server_url() + "/404";
+        let mut server = Server::new_async().await;
+        let _m200 = server.mock("GET", "/200").with_status(200).create();
+        let _m401 = server.mock("GET", "/401").with_status(401).create();
+        let _m404 = server.mock("GET", "/404").with_status(404).create();
+        let endpoint_200 = server.url() + "/200";
+        let endpoint_401 = server.url() + "/401";
+        let endpoint_404 = server.url() + "/404";
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(format!("{} {} {}", endpoint_200, endpoint_401, endpoint_404).as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
@@ -142,7 +152,7 @@ mod cli {
         cmd.arg("some-file-that-doesnt-exist");
 
         cmd.assert().failure();
-        cmd.assert().failure().stderr("error: Invalid value \"some-file-that-doesnt-exist\" for \'<FILES>...\': File not found [\"some-file-that-doesnt-exist\"]\n\nFor more information try --help\n");
+        cmd.assert().failure().stderr("error: invalid value \'some-file-that-doesnt-exist\' for \'<FILES>...\': File not found [\"some-file-that-doesnt-exist\"]\n\nFor more information, try \'--help\'.\n");
     }
 
     #[test]
@@ -175,8 +185,9 @@ mod cli {
 
     #[tokio::test]
     async fn test_output__all_opts_printed() -> TestResult {
-        let _m200 = mock("GET", "/200").with_status(200).create();
-        let endpoint = mockito::server_url() + "/200";
+        let mut server = Server::new_async().await;
+        let _m200 = server.mock("GET", "/200").with_status(200).create();
+        let endpoint = server.url() + "/200";
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(endpoint.as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
