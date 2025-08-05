@@ -1,4 +1,4 @@
-.PHONY: audit build check ci clippy fmt link lint publish release test
+.PHONY: audit build check ci clippy coverage fmt link lint publish release test
 
 BIN_NAME  = urlsup
 CARGO     = $(shell which cargo)
@@ -16,6 +16,14 @@ ci: lint clippy test
 
 clippy:
 	$(CARGO) clippy
+
+coverage:
+	@command -v cargo-tarpaulin >/dev/null 2>&1 || { \
+		echo "Installing cargo-tarpaulin..."; \
+		$(CARGO) install cargo-tarpaulin; \
+	}
+	$(CARGO) tarpaulin --verbose --all-features --workspace --timeout 120 --out html --output-dir coverage
+	@echo "Coverage report generated in coverage/tarpaulin-report.html"
 
 fmt:
 	@$(CARGO) fmt
