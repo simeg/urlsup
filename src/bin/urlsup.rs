@@ -11,11 +11,12 @@ extern crate urlsup;
 
 use clap::{Arg, ArgAction, Command};
 use urlsup::finder::Finder;
+use urlsup::path_utils::expand_paths;
 use urlsup::validator::Validator;
 use urlsup::{UrlsUp, UrlsUpOptions};
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 const OPT_FILES: &str = "FILES";
@@ -28,64 +29,6 @@ const OPT_RECURSIVE: &str = "recursive";
 const OPT_FILE_TYPES: &str = "file-types";
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
-
-fn expand_paths(
-    input_paths: Vec<&Path>,
-    recursive: bool,
-    file_types: Option<&HashSet<String>>,
-) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
-    let mut result_paths = Vec::new();
-
-    for path in input_paths {
-        if path.is_file() {
-            // Check file extension if filtering is enabled
-            if let Some(extensions) = file_types {
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if extensions.contains(ext) {
-                        result_paths.push(path.to_path_buf());
-                    }
-                } else if extensions.contains("") {
-                    // Include files without extensions if "" is in the set
-                    result_paths.push(path.to_path_buf());
-                }
-            } else {
-                result_paths.push(path.to_path_buf());
-            }
-        } else if path.is_dir() && recursive {
-            let mut builder = ignore::WalkBuilder::new(path);
-            builder.hidden(false); // Include hidden files
-
-            for entry in builder.build() {
-                let entry = entry?;
-                let entry_path = entry.path();
-
-                if entry_path.is_file() {
-                    // Check file extension if filtering is enabled
-                    if let Some(extensions) = file_types {
-                        if let Some(ext) = entry_path.extension().and_then(|e| e.to_str()) {
-                            if extensions.contains(ext) {
-                                result_paths.push(entry_path.to_path_buf());
-                            }
-                        } else if extensions.contains("") {
-                            // Include files without extensions if "" is in the set
-                            result_paths.push(entry_path.to_path_buf());
-                        }
-                    } else {
-                        result_paths.push(entry_path.to_path_buf());
-                    }
-                }
-            }
-        } else if path.is_dir() && !recursive {
-            eprintln!(
-                "error: '{}' is a directory. Use --recursive to process directories.",
-                path.display()
-            );
-            std::process::exit(2);
-        }
-    }
-
-    Ok(result_paths)
-}
 
 #[tokio::main]
 async fn main() {

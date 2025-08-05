@@ -199,4 +199,95 @@ mod tests {
 
         assert!(is_err);
     }
+
+    #[test]
+    fn test_find_urls__multiple_files() -> TestResult {
+        let mut file1 = tempfile::NamedTempFile::new()?;
+        let mut file2 = tempfile::NamedTempFile::new()?;
+
+        file1.write_all("First file with https://example.com".as_bytes())?;
+        file2.write_all("Second file with https://test.org and https://demo.net".as_bytes())?;
+
+        let finder = Finder::default();
+        let paths = vec![file1.path(), file2.path()];
+        let result = finder.find_urls(paths)?;
+
+        assert_eq!(result.len(), 3);
+
+        let urls: Vec<&str> = result.iter().map(|ul| ul.url.as_str()).collect();
+        assert!(urls.contains(&"https://example.com"));
+        assert!(urls.contains(&"https://test.org"));
+        assert!(urls.contains(&"https://demo.net"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_urls__with_recursive_structure() -> TestResult {
+        use crate::path_utils::expand_paths;
+        use std::collections::HashSet;
+        use std::fs;
+
+        // Create test directory structure
+        let temp_dir = tempfile::tempdir()?;
+        let base = temp_dir.path();
+
+        fs::create_dir_all(base.join("docs"))?;
+        fs::create_dir_all(base.join("src"))?;
+
+        // Create files with URLs
+        fs::write(
+            base.join("README.md"),
+            "# Project\nWebsite: https://project.com\nRepo: https://github.com/user/repo",
+        )?;
+        fs::write(
+            base.join("docs/guide.md"),
+            "Documentation at https://docs.example.com",
+        )?;
+        fs::write(base.join("src/main.rs"), "// See: https://rust-lang.org")?;
+
+        // Use expand_paths to get all markdown files recursively
+        let mut extensions = HashSet::new();
+        extensions.insert("md".to_string());
+
+        let expanded_paths = expand_paths(vec![base], true, Some(&extensions))?;
+        let paths: Vec<&std::path::Path> = expanded_paths.iter().map(|p| p.as_path()).collect();
+
+        let finder = Finder::default();
+        let result = finder.find_urls(paths)?;
+
+        // Should find URLs from markdown files only
+        assert_eq!(result.len(), 3); // project.com, github.com, docs.example.com
+
+        let urls: Vec<&str> = result.iter().map(|ul| ul.url.as_str()).collect();
+        assert!(urls.contains(&"https://project.com"));
+        assert!(urls.contains(&"https://github.com/user/repo"));
+        assert!(urls.contains(&"https://docs.example.com"));
+
+        // Should not find rust-lang.org since .rs files were filtered out
+        assert!(!urls.contains(&"https://rust-lang.org"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_urls__empty_directory() -> TestResult {
+        use crate::path_utils::expand_paths;
+        use std::collections::HashSet;
+
+        let temp_dir = tempfile::tempdir()?;
+
+        // Create directory with no matching files
+        let mut extensions = HashSet::new();
+        extensions.insert("md".to_string());
+
+        let expanded_paths = expand_paths(vec![temp_dir.path()], true, Some(&extensions))?;
+        let paths: Vec<&std::path::Path> = expanded_paths.iter().map(|p| p.as_path()).collect();
+
+        let finder = Finder::default();
+        let result = finder.find_urls(paths)?;
+
+        assert_eq!(result.len(), 0);
+        Ok(())
+    }
 }

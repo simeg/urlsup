@@ -8,6 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 pub mod finder;
+pub mod path_utils;
 pub mod validator;
 
 pub struct UrlsUp {
