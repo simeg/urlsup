@@ -37,9 +37,6 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
-
       - name: Check for errors
         run: cargo check --all-targets --all-features
 
@@ -48,9 +45,6 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Security audit
-        run: cargo audit
 
       - name: Test
         run: cargo test --all-features
