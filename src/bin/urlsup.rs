@@ -14,7 +14,8 @@ use urlsup::finder::Finder;
 use urlsup::validator::Validator;
 use urlsup::{UrlsUp, UrlsUpOptions};
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const OPT_FILES: &str = "FILES";
@@ -23,8 +24,68 @@ const OPT_TIMEOUT: &str = "timeout";
 const OPT_ALLOW: &str = "allow";
 const OPT_THREADS: &str = "threads";
 const OPT_ALLOW_TIMEOUT: &str = "allow-timeout";
+const OPT_RECURSIVE: &str = "recursive";
+const OPT_FILE_TYPES: &str = "file-types";
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn expand_paths(
+    input_paths: Vec<&Path>,
+    recursive: bool,
+    file_types: Option<&HashSet<String>>,
+) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    let mut result_paths = Vec::new();
+
+    for path in input_paths {
+        if path.is_file() {
+            // Check file extension if filtering is enabled
+            if let Some(extensions) = file_types {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if extensions.contains(ext) {
+                        result_paths.push(path.to_path_buf());
+                    }
+                } else if extensions.contains("") {
+                    // Include files without extensions if "" is in the set
+                    result_paths.push(path.to_path_buf());
+                }
+            } else {
+                result_paths.push(path.to_path_buf());
+            }
+        } else if path.is_dir() && recursive {
+            let mut builder = ignore::WalkBuilder::new(path);
+            builder.hidden(false); // Include hidden files
+
+            for entry in builder.build() {
+                let entry = entry?;
+                let entry_path = entry.path();
+
+                if entry_path.is_file() {
+                    // Check file extension if filtering is enabled
+                    if let Some(extensions) = file_types {
+                        if let Some(ext) = entry_path.extension().and_then(|e| e.to_str()) {
+                            if extensions.contains(ext) {
+                                result_paths.push(entry_path.to_path_buf());
+                            }
+                        } else if extensions.contains("") {
+                            // Include files without extensions if "" is in the set
+                            result_paths.push(entry_path.to_path_buf());
+                        }
+                    } else {
+                        result_paths.push(entry_path.to_path_buf());
+                    }
+                }
+            }
+        } else if path.is_dir() && !recursive {
+            eprintln!(
+                "error: '{}' is a directory. Use --recursive to process directories.",
+                path.display()
+            );
+            std::process::exit(2);
+        }
+    }
+
+    Ok(result_paths)
+}
 
 #[tokio::main]
 async fn main() {
@@ -73,6 +134,21 @@ async fn main() {
         .num_args(0)
         .required(false);
 
+    let opt_recursive = Arg::new(OPT_RECURSIVE)
+        .help("Recursively process directories")
+        .short('r')
+        .long(OPT_RECURSIVE)
+        .action(ArgAction::SetTrue)
+        .num_args(0)
+        .required(false);
+
+    let opt_file_types = Arg::new(OPT_FILE_TYPES)
+        .help("Comma separated file extensions to process (e.g., md,html,txt)")
+        .long(OPT_FILE_TYPES)
+        .value_name("extensions")
+        .action(ArgAction::Set)
+        .required(false);
+
     let matches = Command::new("urlsup")
         .version("1.0.1")
         .author("Simon Egersand <s.egersand@gmail.com>")
@@ -83,6 +159,8 @@ async fn main() {
         .arg(opt_allow)
         .arg(opt_threads)
         .arg(opt_allow_timeout)
+        .arg(opt_recursive)
+        .arg(opt_file_types)
         .get_matches();
 
     let urls_up = UrlsUp::new(Finder::default(), Validator::default());
@@ -141,10 +219,10 @@ async fn main() {
     }
 
     if let Some(files) = matches.get_many::<String>(OPT_FILES) {
-        let paths = files.map(Path::new).collect::<Vec<&Path>>();
+        let input_paths = files.map(Path::new).collect::<Vec<&Path>>();
 
-        // Validate files exist
-        for path in &paths {
+        // Validate input paths exist
+        for path in &input_paths {
             if !path.exists() {
                 eprintln!(
                     "error: invalid value '{}' for '<FILES>...': File not found [\"{}\"]\n\nFor more information, try '--help'.",
@@ -154,6 +232,35 @@ async fn main() {
                 std::process::exit(2);
             }
         }
+
+        // Parse file type filter
+        let file_types = if let Some(types_str) = matches.get_one::<String>(OPT_FILE_TYPES) {
+            let types: HashSet<String> =
+                types_str.split(',').map(|s| s.trim().to_string()).collect();
+            Some(types)
+        } else {
+            None
+        };
+
+        // Get recursive flag
+        let recursive = matches.get_flag(OPT_RECURSIVE);
+
+        // Expand directories to file paths
+        let expanded_paths = match expand_paths(input_paths, recursive, file_types.as_ref()) {
+            Ok(paths) => paths,
+            Err(e) => {
+                eprintln!("Error expanding paths: {e}");
+                std::process::exit(1);
+            }
+        };
+
+        if expanded_paths.is_empty() {
+            eprintln!("No files found to process");
+            std::process::exit(1);
+        }
+
+        // Convert PathBuf to &Path for the run method
+        let paths: Vec<&Path> = expanded_paths.iter().map(|p| p.as_path()).collect();
 
         match urls_up.run(paths, opts).await {
             Ok(result) => {

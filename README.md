@@ -17,75 +17,101 @@ This project is a slim version of
 USAGE:
     urlsup [OPTIONS] <FILES>...
 
-FLAGS:
-        --allow-timeout             URLs that time out are allowed
+ARGUMENTS:
+    <FILES>...    Files or directories to check
 
 OPTIONS:
-    -a, --allow <status codes>      Comma separated status code errors to allow
-        --threads <thread count>    Thread count for making requests (default: CPU core count)
-    -t, --timeout <seconds>         Connection timeout in seconds (default: 30)
-    -w, --white-list <urls>         Comma separated URLs to white list
-
-ARGS:
-    <FILES>...    Files to check
+    -w, --white-list <urls>        Comma separated URLs to white list
+    -t, --timeout <seconds>        Connection timeout in seconds (default: 30)
+    -a, --allow <status codes>     Comma separated status code errors to allow
+        --threads <thread count>   Thread count for making requests (default: CPU core count)
+        --allow-timeout            URLs that time out are allowed
+    -r, --recursive                Recursively process directories
+        --file-types <extensions>  Comma separated file extensions to process (e.g., md,html,txt)
+    -h, --help                     Print help
+    -V, --version                  Print version
 ```
 
 ## Examples
+
+### Basic File Checking
 ```bash
-$ urlsup `find . -name "*.md"`
-> Using threads: 8
-> Using timeout (seconds): 30
-> Allow timeout: false
-> Will check URLs in 1 file
-   1. ./README.md
+# Check a single file
+$ urlsup README.md
 
-⠹ Finding URLs in files...
+# Check multiple files
+$ urlsup README.md CHANGELOG.md
 
-> Found 2 unique URLs, 3 in total
-   1. https://httpstat.us/401
-   2. https://httpstat.us/404
-
-⠏ Checking URLs...
-
-> Issues
-   1. 401 https://httpstat.us/401
-   2. 404 https://httpstat.us/404
-```
-
-```bash
-$ urlsup `find . -name "*.md"`
-> Using threads: 8
-> Using timeout (seconds): 30
-> Allow timeout: false
-> Will check URLs in 1 file
-   1. ./README.md
-
-⠹ Finding URLs in files...
-
-> Found 1 unique URL, 1 in total
-   1. https://httpstat.us/200
-
-⠏ Checking URLs...
-
-> No issues!
-```
-
-```bash
-$ urlsup README.md --white-list rust,crates
-# white list all links starting with rust or crates
-
-$ urlsup README.md,README-zh.md
-# check links in 2 files
-
+# Check files with wildcards
 $ urlsup docs/*.md
-# check all markdown files in docs/ directory
-
-$ urlsup README.md --allow-timeout -t 5
-# speed up validation by setting a timeout of 5 seconds per link request and allowing timeouts
-
-$ urlsup README.md --allow 403,429
-# allow status code errors 403 and 429
 ```
+
+### Directory Processing
+
+**Important**: `urlsup` treats files and directories differently:
+
+- **Files**: Directly processed (e.g., `urlsup README.md`)
+- **Directories**: Must use `--recursive` flag (e.g., `urlsup --recursive docs/`)
+
+```bash
+# ❌ This will fail with an error
+$ urlsup docs/
+error: 'docs/' is a directory. Use --recursive to process directories.
+
+# ✅ Process all files in a directory recursively
+$ urlsup --recursive docs/
+
+# ✅ Process only specific file types
+$ urlsup --recursive --file-types md,txt docs/
+
+# ✅ Process current directory recursively
+$ urlsup --recursive .
+```
+
+### File Type Filtering
+```bash
+# Only check markdown and text files
+$ urlsup --recursive --file-types md,txt .
+
+# Only check web files
+$ urlsup --recursive --file-types html,css,js website/
+
+# Multiple extensions
+$ urlsup --recursive --file-types md,rst,txt docs/
+```
+
+### Advanced Options
+```bash
+# Allow specific status codes
+$ urlsup README.md --allow 403,429
+
+# Set timeout and allow timeouts
+$ urlsup README.md --allow-timeout -t 5
+
+# Whitelist URLs (partial matches)
+$ urlsup README.md --white-list rust,crates
+
+# Combine recursive with filtering and options
+$ urlsup --recursive --file-types md --allow 403 --timeout 10 docs/
+```
+
+### Git Integration
+
+When using `--recursive`, `urlsup` automatically respects your `.gitignore` files:
+
+```bash
+# This will skip files/directories listed in .gitignore
+$ urlsup --recursive .
+
+# Examples of automatically ignored paths:
+# - node_modules/
+# - target/
+# - .git/
+# - *.log files
+# - Any patterns in your .gitignore
+```
+
+This means you don't need to manually exclude build artifacts, dependencies, or other generated files.
 
 ## Installation
 

@@ -208,4 +208,74 @@ mod cli {
             .stdout(starts_with("> Using threads: 10\n> Using timeout (seconds): 20\n> Allow timeout: true\n> Ignoring white listed URL(s)\n   1. http://some-url.com\n> Allowing HTTP status codes\n   1. 200\n   2. 404"));
         Ok(())
     }
+
+    #[test]
+    fn test_output__when_directory_without_recursive() -> TestResult {
+        let temp_dir = tempfile::tempdir()?;
+        let mut cmd = Command::cargo_bin(NAME)?;
+
+        cmd.arg(temp_dir.path());
+
+        cmd.assert().failure();
+        cmd.assert().failure().stderr(contains(
+            "is a directory. Use --recursive to process directories.",
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_output__when_recursive_flag_used() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m200 = server.mock("GET", "/200").with_status(200).create();
+        let endpoint = server.url() + "/200";
+
+        // Create temporary directory with a markdown file
+        let temp_dir = tempfile::tempdir()?;
+        let file_path = temp_dir.path().join("test.md");
+        std::fs::write(&file_path, endpoint.as_bytes())?;
+
+        let mut cmd = Command::cargo_bin(NAME)?;
+
+        cmd.arg("--recursive").arg(temp_dir.path());
+
+        cmd.assert().success();
+        cmd.assert()
+            .success()
+            .stdout(contains("Found 1 unique URL(s), 1 in total"));
+        cmd.assert().success().stdout(ends_with("No issues!\n"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_output__when_file_types_filter_used() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m200 = server.mock("GET", "/200").with_status(200).create();
+        let _m201 = server.mock("GET", "/201").with_status(200).create();
+        let endpoint1 = server.url() + "/200";
+        let endpoint2 = server.url() + "/201";
+
+        // Create temporary directory with different file types
+        let temp_dir = tempfile::tempdir()?;
+        let md_file = temp_dir.path().join("test.md");
+        let txt_file = temp_dir.path().join("test.txt");
+        let html_file = temp_dir.path().join("test.html");
+
+        std::fs::write(&md_file, endpoint1.as_bytes())?;
+        std::fs::write(&txt_file, endpoint2.as_bytes())?;
+        std::fs::write(&html_file, "no urls here")?;
+
+        let mut cmd = Command::cargo_bin(NAME)?;
+
+        cmd.arg("--recursive")
+            .arg("--file-types")
+            .arg("md,txt")
+            .arg(temp_dir.path());
+
+        cmd.assert().success();
+        cmd.assert()
+            .success()
+            .stdout(contains("Found 2 unique URL(s), 2 in total"));
+        cmd.assert().success().stdout(ends_with("No issues!\n"));
+        Ok(())
+    }
 }
