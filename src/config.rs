@@ -51,6 +51,9 @@ pub struct Config {
 
     /// Enable verbose logging
     pub verbose: Option<bool>,
+
+    /// Use HEAD requests instead of GET for faster validation (some servers may not support)
+    pub use_head_requests: Option<bool>,
 }
 
 impl Default for Config {
@@ -71,6 +74,7 @@ impl Default for Config {
             rate_limit_delay: Some(0),
             output_format: Some("text".to_string()),
             verbose: Some(false),
+            use_head_requests: Some(false), // Default to GET for compatibility
         }
     }
 }

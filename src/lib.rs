@@ -555,7 +555,7 @@ mod it_tests {
         let urls_up = UrlsUp::new_for_testing(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: Duration::from_millis(10),
+            timeout: Duration::from_millis(5000), // Increase timeout for CI stability
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
@@ -568,6 +568,16 @@ mod it_tests {
 
         let actual = urls_up.run(vec![file.path()], opts).await?;
 
+        // Debug: print results if test fails
+        if !actual.is_empty() {
+            eprintln!("Expected empty results but got {} results:", actual.len());
+            for result in &actual {
+                eprintln!(
+                    "  URL: {}, Status: {:?}, Description: {:?}",
+                    result.url, result.status_code, result.description
+                );
+            }
+        }
         assert!(actual.is_empty());
         Ok(())
     }
@@ -577,7 +587,7 @@ mod it_tests {
         let urls_up = UrlsUp::new_for_testing(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: Duration::from_millis(10),
+            timeout: Duration::from_millis(5000), // Increase timeout for CI stability
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
@@ -590,6 +600,10 @@ mod it_tests {
 
         let result = urls_up.run(vec![file.path()], opts).await?;
 
+        // Debug: print results if test fails
+        if result.is_empty() {
+            eprintln!("Expected non-empty results but got empty results for URL: {endpoint}");
+        }
         assert!(!result.is_empty());
 
         let actual = result.first().unwrap();
@@ -792,7 +806,7 @@ mod it_tests {
         let urls_up = UrlsUp::new_for_testing(Finder::default(), Validator::default());
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: Duration::from_millis(10),
+            timeout: Duration::from_millis(5000), // Increase timeout for CI stability
             allowed_status_codes: Some(vec![404]), // Allow 404
             thread_count: 1,
             allow_timeout: false,

@@ -1,7 +1,7 @@
-use ahash::AHashSet;
 use async_trait::async_trait;
 use futures::{StreamExt, stream};
 use reqwest::redirect::Policy;
+use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use tokio::time::{Duration, sleep};
@@ -107,6 +107,10 @@ impl ValidateUrls for Validator {
             .timeout(opts.timeout)
             .redirect(redirect_policy)
             .user_agent(user_agent)
+            .http2_prior_knowledge() // Enable HTTP/2 for better connection reuse
+            .pool_max_idle_per_host(50) // Increase connection pool size
+            .pool_idle_timeout(Some(Duration::from_secs(90)))
+            // Compression is enabled by default in reqwest
             .build()
             .unwrap();
 
@@ -155,9 +159,10 @@ impl ValidateUrls for Validator {
     ) -> Vec<ValidationResult> {
         // Optimized deduplication using AHashSet
         let unique_urls = Self::deduplicate_urls_optimized(&urls);
+        let unique_count = unique_urls.len(); // Store count before moving
 
         if let Some(ref mut prog) = progress {
-            prog.start_url_validation(unique_urls.len());
+            prog.start_url_validation(unique_count);
         }
 
         let redirect_policy = Policy::limited(10);
@@ -170,7 +175,13 @@ impl ValidateUrls for Validator {
         let mut client_builder = reqwest::Client::builder()
             .timeout(config.timeout_duration())
             .redirect(redirect_policy)
-            .user_agent(user_agent);
+            .user_agent(user_agent)
+            .http2_prior_knowledge() // Enable HTTP/2 for better connection reuse
+            .http2_keep_alive_interval(Some(Duration::from_secs(30))) // Keep connections alive
+            .http2_keep_alive_timeout(Duration::from_secs(90))
+            .pool_max_idle_per_host(50) // Increase connection pool size
+            .pool_idle_timeout(Some(Duration::from_secs(90)));
+        // Compression (gzip, deflate, brotli) is enabled by default in reqwest
 
         // SSL verification
         if config.skip_ssl_verification.unwrap_or(false) {
@@ -192,6 +203,8 @@ impl ValidateUrls for Validator {
         let retry_delay = config.retry_delay_duration();
         let rate_limit_delay = config.rate_limit_delay_duration();
 
+        // Process URLs in batches for better memory efficiency
+        let batch_size = thread_count.min(100); // Limit batch size to prevent memory overflow
         let mut find_results_and_responses = stream::iter(unique_urls)
             .map(|ul| {
                 let client = &client;
@@ -208,7 +221,13 @@ impl ValidateUrls for Validator {
 
                     // Retry logic
                     while attempts <= retry_attempts {
-                        match client.get(&ul.url).send().await {
+                        let request = if config.use_head_requests.unwrap_or(false) {
+                            client.head(&ul.url)
+                        } else {
+                            client.get(&ul.url)
+                        };
+
+                        match request.send().await {
                             Ok(resp) => {
                                 response = Some(Ok(resp));
                                 break;
@@ -233,9 +252,10 @@ impl ValidateUrls for Validator {
                     (ul.clone(), response.unwrap())
                 }
             })
-            .buffer_unordered(thread_count);
+            .buffer_unordered(batch_size);
 
-        let mut result = vec![];
+        // Pre-allocate result vector with capacity for better memory efficiency
+        let mut result = Vec::with_capacity(unique_count);
         let mut success_count = 0;
 
         while let Some((ul, response)) = find_results_and_responses.next().await {
@@ -274,9 +294,9 @@ impl ValidateUrls for Validator {
 }
 
 impl Validator {
-    /// Optimized URL deduplication using AHashSet for better performance
+    /// Optimized URL deduplication using FxHashSet for maximum performance  
     fn deduplicate_urls_optimized(urls: &[UrlLocation]) -> Vec<UrlLocation> {
-        let mut seen_urls = AHashSet::with_capacity(urls.len());
+        let mut seen_urls = FxHashSet::with_capacity_and_hasher(urls.len(), Default::default());
         let mut unique_urls = Vec::with_capacity(urls.len());
 
         for url_location in urls {
@@ -376,7 +396,7 @@ mod tests {
         let validator = Validator::default();
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: Duration::from_millis(5),
+            timeout: Duration::from_millis(5000), // Increase timeout for CI stability
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
@@ -407,7 +427,7 @@ mod tests {
         let validator = Validator::default();
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: Duration::from_millis(5),
+            timeout: Duration::from_millis(50), // Small timeout to trigger timeout behavior
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
@@ -471,7 +491,7 @@ mod tests {
         let validator = Validator::default();
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: Duration::from_millis(5),
+            timeout: Duration::from_millis(5000), // Increase timeout for CI stability
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,

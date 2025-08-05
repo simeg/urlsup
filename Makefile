@@ -27,6 +27,7 @@ coverage:
 
 fmt:
 	@$(CARGO) fmt
+	@$(CARGO) clippy --all-targets --all-features --fix --allow-dirty
 
 link:
 	@ln -sf ./target/debug/$(BIN_NAME) .

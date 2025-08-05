@@ -16,6 +16,13 @@ static REGEX_MATCHER: Lazy<RegexMatcher> = Lazy::new(|| {
     RegexMatcher::new(MARKDOWN_URL_PATTERN).expect("Failed to compile URL regex pattern")
 });
 
+// Reuse LinkFinder instance for better performance
+static LINK_FINDER: Lazy<LinkFinder> = Lazy::new(|| {
+    let mut finder = LinkFinder::new();
+    finder.kinds(&[LinkKind::Url]);
+    finder
+});
+
 pub trait UrlFinder {
     fn find_urls(&self, paths: Vec<&Path>) -> io::Result<Vec<UrlLocation>>;
 }
@@ -25,7 +32,9 @@ pub struct Finder {}
 
 impl UrlFinder for Finder {
     fn find_urls(&self, paths: Vec<&Path>) -> io::Result<Vec<UrlLocation>> {
-        let mut result = Vec::new();
+        // Pre-allocate with estimated capacity based on file count
+        let estimated_capacity = paths.len() * 10; // Estimate ~10 URLs per file
+        let mut result = Vec::with_capacity(estimated_capacity);
 
         for path in paths {
             let url_matches = Finder::parse_lines_with_urls(path)?;
@@ -43,7 +52,7 @@ type UrlMatch = (String, String, u64);
 
 impl Finder {
     fn parse_lines_with_urls(path: &Path) -> io::Result<Vec<UrlMatch>> {
-        let mut matches = vec![];
+        let mut matches = Vec::with_capacity(20); // Pre-allocate for estimated URLs per file
         Searcher::new().search_path(
             &*REGEX_MATCHER,
             path,
@@ -61,14 +70,12 @@ impl Finder {
     fn parse_urls(url_match: UrlMatch) -> Vec<UrlLocation> {
         let (url, file_name, line) = url_match;
 
-        let mut finder = LinkFinder::new();
-        finder.kinds(&[LinkKind::Url]);
-
-        finder
+        // Use the static LinkFinder for better performance
+        LINK_FINDER
             .links(url.as_str())
             .map(|url| UrlLocation {
                 line,
-                file_name: file_name.to_owned(),
+                file_name: file_name.clone(), // Use clone instead of to_owned for clarity
                 url: url.as_str().to_string(),
             })
             .collect()
