@@ -15,7 +15,7 @@ audit:
 ci: lint clippy test
 
 clippy:
-	$(CARGO) clippy
+	$(CARGO) clippy --all-targets --all-features -- -D warnings
 
 coverage:
 	@command -v cargo-tarpaulin >/dev/null 2>&1 || { \

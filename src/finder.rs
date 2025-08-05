@@ -151,7 +151,7 @@ mod tests {
 
         let actual = Finder::parse_lines_with_urls(file.path())?;
 
-        let actual_match1 = actual.get(0).unwrap().to_owned();
+        let actual_match1 = actual.first().unwrap().to_owned();
         let actual_match2 = actual.get(1).unwrap().to_owned();
         let actual_match3 = actual.get(2).unwrap().to_owned();
         let actual_match4 = actual.get(3).unwrap().to_owned();

@@ -27,6 +27,18 @@ const OPT_THREADS: &str = "threads";
 const OPT_ALLOW_TIMEOUT: &str = "allow-timeout";
 const OPT_RECURSIVE: &str = "recursive";
 const OPT_FILE_TYPES: &str = "file-types";
+// TODO: Implement advanced CLI options
+// const OPT_CONFIG: &str = "config";
+// const OPT_EXCLUDE: &str = "exclude";
+// const OPT_USER_AGENT: &str = "user-agent";
+// const OPT_RETRY: &str = "retry";
+// const OPT_RETRY_DELAY: &str = "retry-delay";
+// const OPT_SKIP_SSL: &str = "skip-ssl";
+// const OPT_PROXY: &str = "proxy";
+// const OPT_RATE_LIMIT: &str = "rate-limit";
+// const OPT_OUTPUT_FORMAT: &str = "output-format";
+// const OPT_VERBOSE: &str = "verbose";
+// const OPT_PROGRESS: &str = "progress";
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 

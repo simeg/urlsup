@@ -7,8 +7,11 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
+pub mod config;
+pub mod error;
 pub mod finder;
 pub mod path_utils;
+pub mod progress;
 pub mod validator;
 
 pub struct UrlsUp {

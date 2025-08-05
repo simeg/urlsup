@@ -73,7 +73,7 @@ mod cli {
         let endpoint_404 = server.url() + "/404";
         let endpoint_401 = server.url() + "/401";
         let mut file = tempfile::NamedTempFile::new()?;
-        file.write_all(format!("{} {}", endpoint_404, endpoint_401).as_bytes())?;
+        file.write_all(format!("{endpoint_404} {endpoint_401}").as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
         cmd.arg(file.path());
@@ -86,10 +86,10 @@ mod cli {
         // Order is not deterministic so can't assert it
         cmd.assert()
             .failure()
-            .stdout(contains(&format!("404 - {}/404", server.url())));
+            .stdout(contains(format!("404 - {}/404", server.url())));
         cmd.assert()
             .failure()
-            .stdout(contains(&format!("401 - {}/401", server.url())));
+            .stdout(contains(format!("401 - {}/401", server.url())));
         Ok(())
     }
 
@@ -103,17 +103,17 @@ mod cli {
         let endpoint_401 = server.url() + "/401";
         let endpoint_404 = server.url() + "/404";
         let mut file = tempfile::NamedTempFile::new()?;
-        file.write_all(format!("{} {} {}", endpoint_200, endpoint_401, endpoint_404).as_bytes())?;
+        file.write_all(format!("{endpoint_200} {endpoint_401} {endpoint_404}").as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
-        cmd.arg(file.path()).arg("--white-list").arg(&format!(
+        cmd.arg(file.path()).arg("--white-list").arg(format!(
             "{}/401,{}/404",
             server.url(),
             server.url()
         ));
 
         cmd.assert().success();
-        cmd.assert().success().stdout(contains(&format!(
+        cmd.assert().success().stdout(contains(format!(
             "Ignoring white listed URL(s)\n   1. {}/401\n   2. {}/404",
             server.url(),
             server.url()
@@ -132,7 +132,7 @@ mod cli {
         let endpoint_401 = server.url() + "/401";
         let endpoint_404 = server.url() + "/404";
         let mut file = tempfile::NamedTempFile::new()?;
-        file.write_all(format!("{} {} {}", endpoint_200, endpoint_401, endpoint_404).as_bytes())?;
+        file.write_all(format!("{endpoint_200} {endpoint_401} {endpoint_404}").as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
         cmd.arg(file.path()).arg("--allow").arg("401,404");
@@ -159,7 +159,7 @@ mod cli {
     fn test_output__when_too_big_timeout_provided() {
         let file = tempfile::NamedTempFile::new().unwrap();
         let mut cmd = Command::cargo_bin(NAME).unwrap();
-        let too_big_timeout = (118446744073709551616 as u128).to_string();
+        let too_big_timeout = 118446744073709551616_u128.to_string();
 
         cmd.arg(file.path()).arg("--timeout").arg(too_big_timeout);
 

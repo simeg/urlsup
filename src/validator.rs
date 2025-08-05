@@ -1,8 +1,12 @@
+use ahash::AHashSet;
 use async_trait::async_trait;
 use futures::{StreamExt, stream};
 use reqwest::redirect::Policy;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use tokio::time::{Duration, sleep};
 
-use crate::{UrlLocation, UrlsUpOptions};
+use crate::{UrlLocation, UrlsUpOptions, config::Config, progress::ProgressReporter};
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -13,6 +17,13 @@ pub trait ValidateUrls {
         &self,
         urls: Vec<UrlLocation>,
         opts: &UrlsUpOptions,
+    ) -> Vec<ValidationResult>;
+
+    async fn validate_urls_with_config(
+        &self,
+        urls: Vec<UrlLocation>,
+        config: &Config,
+        progress: Option<&mut ProgressReporter>,
     ) -> Vec<ValidationResult>;
 }
 
@@ -134,6 +145,147 @@ impl ValidateUrls for Validator {
         }
 
         result
+    }
+
+    async fn validate_urls_with_config(
+        &self,
+        urls: Vec<UrlLocation>,
+        config: &Config,
+        mut progress: Option<&mut ProgressReporter>,
+    ) -> Vec<ValidationResult> {
+        // Optimized deduplication using AHashSet
+        let unique_urls = Self::deduplicate_urls_optimized(&urls);
+
+        if let Some(ref mut prog) = progress {
+            prog.start_url_validation(unique_urls.len());
+        }
+
+        let redirect_policy = Policy::limited(10);
+        let user_agent = config.user_agent.as_deref().unwrap_or(concat!(
+            env!("CARGO_PKG_NAME"),
+            "/",
+            env!("CARGO_PKG_VERSION")
+        ));
+
+        let mut client_builder = reqwest::Client::builder()
+            .timeout(config.timeout_duration())
+            .redirect(redirect_policy)
+            .user_agent(user_agent);
+
+        // SSL verification
+        if config.skip_ssl_verification.unwrap_or(false) {
+            client_builder = client_builder.danger_accept_invalid_certs(true);
+        }
+
+        // Proxy configuration
+        if let Some(ref proxy_url) = config.proxy {
+            if let Ok(proxy) = reqwest::Proxy::all(proxy_url) {
+                client_builder = client_builder.proxy(proxy);
+            }
+        }
+
+        let client = client_builder.build().unwrap();
+        let progress_counter = Arc::new(AtomicUsize::new(0));
+
+        let thread_count = config.threads.unwrap_or_else(num_cpus::get);
+        let retry_attempts = config.retry_attempts.unwrap_or(0);
+        let retry_delay = config.retry_delay_duration();
+        let rate_limit_delay = config.rate_limit_delay_duration();
+
+        let mut find_results_and_responses = stream::iter(unique_urls)
+            .map(|ul| {
+                let client = &client;
+                let progress_counter = progress_counter.clone();
+                let progress_ref = progress.as_ref();
+                async move {
+                    // Rate limiting
+                    if rate_limit_delay > Duration::from_millis(0) {
+                        sleep(rate_limit_delay).await;
+                    }
+
+                    let mut response = None;
+                    let mut attempts = 0;
+
+                    // Retry logic
+                    while attempts <= retry_attempts {
+                        match client.get(&ul.url).send().await {
+                            Ok(resp) => {
+                                response = Some(Ok(resp));
+                                break;
+                            }
+                            Err(err) => {
+                                if attempts == retry_attempts {
+                                    response = Some(Err(err));
+                                } else {
+                                    sleep(retry_delay).await;
+                                }
+                                attempts += 1;
+                            }
+                        }
+                    }
+
+                    // Update progress
+                    let current = progress_counter.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+                    if let Some(prog) = progress_ref {
+                        prog.update_url_progress(current);
+                    }
+
+                    (ul.clone(), response.unwrap())
+                }
+            })
+            .buffer_unordered(thread_count);
+
+        let mut result = vec![];
+        let mut success_count = 0;
+
+        while let Some((ul, response)) = find_results_and_responses.next().await {
+            let validation_result = match response {
+                Ok(res) => {
+                    let status_code = res.status().as_u16();
+                    if res.status().is_success() {
+                        success_count += 1;
+                    }
+                    ValidationResult {
+                        url: ul.url,
+                        line: ul.line,
+                        file_name: ul.file_name,
+                        status_code: Some(status_code),
+                        description: None,
+                    }
+                }
+                Err(err) => ValidationResult {
+                    url: ul.url,
+                    line: ul.line,
+                    file_name: ul.file_name,
+                    status_code: None,
+                    description: std::error::Error::source(&err).map(|e| e.to_string()),
+                },
+            };
+
+            result.push(validation_result);
+        }
+
+        if let Some(ref prog) = progress {
+            prog.finish_url_validation(success_count, result.len());
+        }
+
+        result
+    }
+}
+
+impl Validator {
+    /// Optimized URL deduplication using AHashSet for better performance
+    fn deduplicate_urls_optimized(urls: &[UrlLocation]) -> Vec<UrlLocation> {
+        let mut seen_urls = AHashSet::with_capacity(urls.len());
+        let mut unique_urls = Vec::with_capacity(urls.len());
+
+        for url_location in urls {
+            if seen_urls.insert(&url_location.url) {
+                unique_urls.push(url_location.clone());
+            }
+        }
+
+        unique_urls
     }
 }
 
@@ -333,10 +485,7 @@ mod tests {
 
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(
-            format!(
-                "arbitrary {} arbitrary [arbitrary]({}) arbitrary {}",
-                endpoint_200, endpoint_404, endpoint_non_existing
-            )
+            format!("arbitrary {endpoint_200} arbitrary [arbitrary]({endpoint_404}) arbitrary {endpoint_non_existing}")
             .as_bytes(),
         )?;
 
