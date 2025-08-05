@@ -34,7 +34,7 @@ link:
 lint:
 	$(CARGO) fmt --all -- --check
 
-publish:
+publish: ci
 	$(CARGO) publish
 
 release:
