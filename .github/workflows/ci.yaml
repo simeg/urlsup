@@ -53,7 +53,10 @@ jobs:
         run: cargo test --all-features
 
       - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin
+        run: |
+          if ! command -v cargo-tarpaulin &> /dev/null; then
+            cargo install cargo-tarpaulin
+          fi
 
       - name: Generate test coverage
         run: cargo tarpaulin --verbose
