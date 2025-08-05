@@ -59,10 +59,10 @@ jobs:
           fi
 
       - name: Generate test coverage
-        run: cargo tarpaulin --verbose
+        run: cargo tarpaulin --all-features --workspace --timeout 120 --out xml
 
       - name: Upload test coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: simeg/urlsup
