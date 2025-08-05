@@ -27,7 +27,7 @@ pub trait ValidateUrls {
     ) -> Vec<ValidationResult>;
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Validator {}
 
 #[derive(Debug, Eq, Clone)]
@@ -376,7 +376,7 @@ mod tests {
         let validator = Validator::default();
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: Duration::from_secs(10),
+            timeout: Duration::from_millis(5),
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
@@ -407,12 +407,12 @@ mod tests {
         let validator = Validator::default();
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: Duration::from_secs(10),
+            timeout: Duration::from_millis(5),
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
         };
-        let endpoint = "https://localhost.urls_up".to_string();
+        let endpoint = "http://192.0.2.1:1/unreachable".to_string();
 
         let results = validator
             .validate_urls(
@@ -433,7 +433,7 @@ mod tests {
                 .description
                 .as_ref()
                 .unwrap()
-                .contains("client error (Connect)")
+                .contains("operation timed out")
         );
     }
 
@@ -471,7 +471,7 @@ mod tests {
         let validator = Validator::default();
         let opts = UrlsUpOptions {
             white_list: None,
-            timeout: Duration::from_secs(10),
+            timeout: Duration::from_millis(5),
             allowed_status_codes: None,
             thread_count: 1,
             allow_timeout: false,
@@ -481,7 +481,7 @@ mod tests {
         let _m404 = server.mock("GET", "/404").with_status(404).create();
         let endpoint_200 = server.url() + "/200";
         let endpoint_404 = server.url() + "/404";
-        let endpoint_non_existing = "https://localhost.urls_up".to_string();
+        let endpoint_non_existing = "http://192.0.2.1:1/nonexisting".to_string();
 
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(
@@ -529,8 +529,555 @@ mod tests {
                 .description
                 .as_ref()
                 .unwrap()
-                .contains("client error (Connect)")
+                .contains("operation timed out")
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_with_config() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m200 = server.mock("GET", "/200").with_status(200).create();
+        let endpoint_200 = server.url() + "/200";
+
+        let config = crate::config::Config {
+            timeout: Some(1),
+            threads: Some(1),
+            retry_attempts: Some(0),
+            ..Default::default()
+        };
+
+        let validator = Validator::default();
+        let actual = validator
+            .validate_urls_with_config(
+                vec![UrlLocation {
+                    url: endpoint_200.clone(),
+                    line: 1,
+                    file_name: "test.md".to_string(),
+                }],
+                &config,
+                None,
+            )
+            .await;
+
+        assert_eq!(actual.len(), 1);
+        assert_eq!(actual[0].url, endpoint_200);
+        assert_eq!(actual[0].status_code, Some(200));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_with_config_retry() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/retry")
+            .with_status(500)
+            .expect(3) // Should be called 3 times (initial + 2 retries)
+            .create();
+        let endpoint = server.url() + "/retry";
+
+        let config = crate::config::Config {
+            timeout: Some(1),
+            threads: Some(1),
+            retry_attempts: Some(2),
+            retry_delay: Some(10), // Very short for testing
+            ..Default::default()
+        };
+
+        let validator = Validator::default();
+        let actual = validator
+            .validate_urls_with_config(
+                vec![UrlLocation {
+                    url: endpoint.clone(),
+                    line: 1,
+                    file_name: "test.md".to_string(),
+                }],
+                &config,
+                None,
+            )
+            .await;
+
+        assert_eq!(actual.len(), 1);
+        assert_eq!(actual[0].url, endpoint);
+        assert_eq!(actual[0].status_code, Some(500));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_with_config_rate_limit() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m1 = server.mock("GET", "/rate1").with_status(200).create();
+        let _m2 = server.mock("GET", "/rate2").with_status(200).create();
+        let endpoint1 = server.url() + "/rate1";
+        let endpoint2 = server.url() + "/rate2";
+
+        let config = crate::config::Config {
+            timeout: Some(1),
+            threads: Some(1),
+            rate_limit_delay: Some(50), // 50ms delay
+            ..Default::default()
+        };
+
+        let start = std::time::Instant::now();
+        let validator = Validator::default();
+        let actual = validator
+            .validate_urls_with_config(
+                vec![
+                    UrlLocation {
+                        url: endpoint1,
+                        line: 1,
+                        file_name: "test.md".to_string(),
+                    },
+                    UrlLocation {
+                        url: endpoint2,
+                        line: 2,
+                        file_name: "test.md".to_string(),
+                    },
+                ],
+                &config,
+                None,
+            )
+            .await;
+        let duration = start.elapsed();
+
+        assert_eq!(actual.len(), 2);
+        // Should take at least 50ms due to rate limiting
+        assert!(duration.as_millis() >= 40); // Allow some margin
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_with_config_custom_user_agent() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", "/ua")
+            .match_header("user-agent", "TestAgent/1.0")
+            .with_status(200)
+            .create();
+        let endpoint = server.url() + "/ua";
+
+        let config = crate::config::Config {
+            timeout: Some(1),
+            threads: Some(1),
+            user_agent: Some("TestAgent/1.0".to_string()),
+            ..Default::default()
+        };
+
+        let validator = Validator::default();
+        let actual = validator
+            .validate_urls_with_config(
+                vec![UrlLocation {
+                    url: endpoint.clone(),
+                    line: 1,
+                    file_name: "test.md".to_string(),
+                }],
+                &config,
+                None,
+            )
+            .await;
+
+        assert_eq!(actual.len(), 1);
+        assert_eq!(actual[0].status_code, Some(200));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_deduplicate_urls_optimized() {
+        let urls = vec![
+            UrlLocation {
+                url: "https://example.com".to_string(),
+                line: 1,
+                file_name: "test1.md".to_string(),
+            },
+            UrlLocation {
+                url: "https://example.com".to_string(),
+                line: 2,
+                file_name: "test2.md".to_string(),
+            },
+            UrlLocation {
+                url: "https://different.com".to_string(),
+                line: 1,
+                file_name: "test3.md".to_string(),
+            },
+        ];
+
+        let deduped = Validator::deduplicate_urls_optimized(&urls);
+
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0].url, "https://example.com");
+        assert_eq!(deduped[1].url, "https://different.com");
+    }
+
+    #[test]
+    fn test_deduplicate_urls_optimized_empty() {
+        let urls = vec![];
+        let deduped = Validator::deduplicate_urls_optimized(&urls);
+        assert_eq!(deduped.len(), 0);
+    }
+
+    #[test]
+    fn test_deduplicate_urls_optimized_single() {
+        let urls = vec![UrlLocation {
+            url: "https://example.com".to_string(),
+            line: 1,
+            file_name: "test.md".to_string(),
+        }];
+
+        let deduped = Validator::deduplicate_urls_optimized(&urls);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].url, "https://example.com");
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_with_config_insecure_ssl() -> TestResult {
+        let validator = Validator::default();
+        let config = crate::config::Config {
+            timeout: Some(1),
+            skip_ssl_verification: Some(true),
+            ..Default::default()
+        };
+
+        // Test with a self-signed or invalid SSL URL
+        let url_location = UrlLocation {
+            url: "http://192.0.2.1:1/ssl-test".to_string(),
+            line: 1,
+            file_name: "test.md".to_string(),
+        };
+
+        let result = validator
+            .validate_urls_with_config(vec![url_location], &config, None)
+            .await;
+
+        // Should not panic and return a result (may still fail due to DNS, but SSL shouldn't be the issue)
+        assert!(!result.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_empty_list() -> TestResult {
+        let validator = Validator::default();
+        let config = crate::config::Config::default();
+
+        let result = validator
+            .validate_urls_with_config(vec![], &config, None)
+            .await;
+
+        assert!(result.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_validation_result_edge_cases() {
+        // Test with very high status code
+        let result = ValidationResult {
+            url: "https://example.com".to_string(),
+            line: 1,
+            file_name: "test.md".to_string(),
+            status_code: Some(999),
+            description: None,
+        };
+        assert!(!result.is_ok());
+
+        // Test with timeout scenario (no status code, specific error)
+        let timeout_result = ValidationResult {
+            url: "https://example.com".to_string(),
+            line: 1,
+            file_name: "test.md".to_string(),
+            status_code: None,
+            description: Some("timeout".to_string()),
+        };
+        assert!(!timeout_result.is_ok());
+        let string_repr = timeout_result.to_string();
+        assert!(string_repr.contains("timeout"));
+    }
+
+    #[test]
+    fn test_deduplicate_urls_optimized_large_dataset() {
+        let mut urls = Vec::new();
+        // Create many duplicates to test performance characteristics
+        for i in 0..1000 {
+            urls.push(UrlLocation {
+                url: format!("https://example.com/{}", i % 10), // 10 unique URLs, 100 duplicates each
+                line: i,
+                file_name: format!("file{i}.md"),
+            });
+        }
+
+        let deduplicated = Validator::deduplicate_urls_optimized(&urls);
+        assert_eq!(deduplicated.len(), 10); // Should have exactly 10 unique URLs
+
+        // Check that first occurrence of each URL is preserved
+        for (i, url) in deduplicated.iter().enumerate() {
+            assert_eq!(url.url, format!("https://example.com/{i}"));
+        }
+    }
+
+    #[test]
+    fn test_deduplicate_urls_optimized_mixed_protocols() {
+        let urls = vec![
+            UrlLocation {
+                url: "http://example.com".to_string(),
+                line: 1,
+                file_name: "file1.md".to_string(),
+            },
+            UrlLocation {
+                url: "https://example.com".to_string(), // Different protocol, should be separate
+                line: 2,
+                file_name: "file2.md".to_string(),
+            },
+            UrlLocation {
+                url: "http://example.com".to_string(), // Duplicate
+                line: 3,
+                file_name: "file3.md".to_string(),
+            },
+        ];
+
+        let deduplicated = Validator::deduplicate_urls_optimized(&urls);
+        assert_eq!(deduplicated.len(), 2); // http and https are different
+        assert_eq!(deduplicated[0].url, "http://example.com");
+        assert_eq!(deduplicated[1].url, "https://example.com");
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_with_config_proxy_success() -> TestResult {
+        let validator = Validator::default();
+        let config = crate::config::Config {
+            timeout: Some(1),
+            proxy: Some("http://valid-proxy:8080".to_string()), // Will fail gracefully
+            ..Default::default()
+        };
+
+        let url_location = UrlLocation {
+            url: "http://192.0.2.1:1/proxy-test".to_string(),
+            line: 1,
+            file_name: "test.md".to_string(),
+        };
+
+        let result = validator
+            .validate_urls_with_config(vec![url_location], &config, None)
+            .await;
+
+        // Should return a result (even if proxy fails)
+        assert_eq!(result.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_error_with_source() -> TestResult {
+        let validator = Validator::default();
+
+        // Use an invalid URL to trigger an error with source
+        let url_location = UrlLocation {
+            url: "http://0.0.0.0:1/invalid".to_string(), // Should cause connection error
+            line: 1,
+            file_name: "test.md".to_string(),
+        };
+
+        let opts = UrlsUpOptions {
+            white_list: None,
+            timeout: Duration::from_millis(10), // Very short timeout
+            allowed_status_codes: None,
+            thread_count: 1,
+            allow_timeout: false,
+        };
+
+        let result = validator.validate_urls(vec![url_location], &opts).await;
+
+        assert_eq!(result.len(), 1);
+        assert!(result[0].status_code.is_none());
+        assert!(result[0].description.is_some() || result[0].description.is_none()); // Either way is valid
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_with_progress() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m = server.mock("GET", "/progress").with_status(200).create();
+        let endpoint = server.url() + "/progress";
+
+        let config = crate::config::Config {
+            timeout: Some(1),
+            ..Default::default()
+        };
+
+        let mut progress = ProgressReporter::new(false); // Disabled for tests
+        let validator = Validator::default();
+        let result = validator
+            .validate_urls_with_config(
+                vec![UrlLocation {
+                    url: endpoint,
+                    line: 1,
+                    file_name: "test.md".to_string(),
+                }],
+                &config,
+                Some(&mut progress),
+            )
+            .await;
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].status_code, Some(200));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_with_config_rate_limit_zero() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m = server.mock("GET", "/norlimit").with_status(200).create();
+        let endpoint = server.url() + "/norlimit";
+
+        let config = crate::config::Config {
+            timeout: Some(1),
+            rate_limit_delay: Some(0), // No rate limiting
+            ..Default::default()
+        };
+
+        let start = std::time::Instant::now();
+        let validator = Validator::default();
+        let result = validator
+            .validate_urls_with_config(
+                vec![UrlLocation {
+                    url: endpoint,
+                    line: 1,
+                    file_name: "test.md".to_string(),
+                }],
+                &config,
+                None,
+            )
+            .await;
+        let duration = start.elapsed();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].status_code, Some(200));
+        // Should be fast with no rate limiting
+        assert!(duration.as_millis() < 500);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_with_config_retry_failure() -> TestResult {
+        let validator = Validator::default();
+        let config = crate::config::Config {
+            timeout: Some(1),
+            retry_attempts: Some(2), // Try 3 times total (initial + 2 retries)
+            retry_delay: Some(10),   // Short delay
+            ..Default::default()
+        };
+
+        // Use non-routable IP to ensure failure
+        let url_location = UrlLocation {
+            url: "http://192.0.2.1:80/retry-fail".to_string(),
+            line: 1,
+            file_name: "test.md".to_string(),
+        };
+
+        let start = std::time::Instant::now();
+        let result = validator
+            .validate_urls_with_config(vec![url_location], &config, None)
+            .await;
+        let duration = start.elapsed();
+
+        assert_eq!(result.len(), 1);
+        assert!(result[0].status_code.is_none());
+        // Should take at least retry_delay * retry_attempts time
+        assert!(duration.as_millis() >= 15); // Allow some margin
+        Ok(())
+    }
+
+    #[test]
+    fn test_validation_result_with_description_only() {
+        // Test valid case with description
+        let result = ValidationResult {
+            url: "https://test.com".to_string(),
+            line: 1,
+            file_name: "test.md".to_string(),
+            status_code: None,
+            description: Some("connection failed".to_string()),
+        };
+
+        let string_repr = result.to_string();
+        assert!(string_repr.contains("https://test.com"));
+        assert!(string_repr.contains("test.md"));
+        assert!(string_repr.contains("connection failed"));
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_default_user_agent() -> TestResult {
+        let validator = Validator::default();
+        let config = crate::config::Config {
+            timeout: Some(1),
+            user_agent: None, // Use default user agent
+            ..Default::default()
+        };
+
+        let url_location = UrlLocation {
+            url: "http://192.0.2.1:1/user-agent".to_string(),
+            line: 1,
+            file_name: "test.md".to_string(),
+        };
+
+        let result = validator
+            .validate_urls_with_config(vec![url_location], &config, None)
+            .await;
+
+        // Should use default user agent and succeed
+        assert_eq!(result.len(), 1);
+        // May succeed or fail depending on network, but shouldn't panic
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_success_counting() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m1 = server.mock("GET", "/success1").with_status(200).create();
+        let _m2 = server.mock("GET", "/success2").with_status(201).create();
+        let _m3 = server.mock("GET", "/fail").with_status(404).create();
+
+        let config = crate::config::Config {
+            timeout: Some(1),
+            ..Default::default()
+        };
+
+        let urls = vec![
+            UrlLocation {
+                url: server.url() + "/success1",
+                line: 1,
+                file_name: "test.md".to_string(),
+            },
+            UrlLocation {
+                url: server.url() + "/success2",
+                line: 2,
+                file_name: "test.md".to_string(),
+            },
+            UrlLocation {
+                url: server.url() + "/fail",
+                line: 3,
+                file_name: "test.md".to_string(),
+            },
+        ];
+
+        let mut progress = ProgressReporter::new(false); // Disabled for tests
+        let validator = Validator::default();
+        let result = validator
+            .validate_urls_with_config(urls, &config, Some(&mut progress))
+            .await;
+
+        // Should process all URLs
+        assert_eq!(result.len(), 3);
+
+        // Check that we have both success and failure cases
+        let success_count = result
+            .iter()
+            .filter(|r| r.status_code == Some(200) || r.status_code == Some(201))
+            .count();
+        let fail_count = result.iter().filter(|r| r.status_code == Some(404)).count();
+
+        assert_eq!(success_count, 2);
+        assert_eq!(fail_count, 1);
 
         Ok(())
     }

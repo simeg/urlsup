@@ -10,29 +10,64 @@ threads, making it very fast. This in combination with its ease of use makes
 it the perfect tool for your CI pipeline.
 
 This project is a slim version of
-[`awesome_bot`](https://github.com/dkhamsing/awesome_bot) but aims to be faster.
+[`awesome_bot`](https://github.com/dkhamsing/awesome_bot) but a lot faster.
 
-## Usage
+## 🎉 What's New in v2.0
+
+**urlsup v2.0** introduces a modern CLI design with breaking changes for better usability:
+
+### 🔄 Renamed Flags (Breaking Changes)
+- `--white-list` → `--allowlist` (modern terminology)
+- `--allow` → `--allow-status` (clearer naming)
+- `--threads` → `--concurrency` (industry standard)
+- `--file-types` → `--include` (shorter, clearer)
+
+### ✨ New Features
+- **📄 Configuration Files**: TOML-based config with automatic discovery
+- **📤 Output Formats**: JSON support for automation (`--format json`)
+- **📊 Progress Reporting**: Beautiful progress bars with real-time stats
+- **🔍 Advanced Filtering**: Regex-based URL exclusion patterns
+- **🔄 Retry Logic**: Configurable retry attempts with exponential backoff
+- **⏱️ Rate Limiting**: Built-in request throttling
+- **🔇 Quiet/Verbose Modes**: Better control over output verbosity
+- **🚨 Enhanced Error Handling**: Comprehensive error types with context
+- **⚡ Performance Optimizations**: Faster deduplication and connection pooling
+
+## 🚀 Usage
 ```bash
-USAGE:
-    urlsup [OPTIONS] <FILES>...
+CLI to validate URLs in files
 
-ARGUMENTS:
-    <FILES>...    Files or directories to check
+Usage: urlsup [OPTIONS] <FILES>...
 
-OPTIONS:
-    -w, --white-list <urls>        Comma separated URLs to white list
-    -t, --timeout <seconds>        Connection timeout in seconds (default: 30)
-    -a, --allow <status codes>     Comma separated status code errors to allow
-        --threads <thread count>   Thread count for making requests (default: CPU core count)
-        --allow-timeout            URLs that time out are allowed
-    -r, --recursive                Recursively process directories
-        --file-types <extensions>  Comma separated file extensions to process (e.g., md,html,txt)
-    -h, --help                     Print help
-    -V, --version                  Print version
+Arguments:
+  <FILES>...  Files or directories to check
+
+Options:
+  -r, --recursive                Recursively process directories
+  -t, --timeout <SECONDS>        Connection timeout in seconds (default: 30)
+      --include <EXTENSIONS>     File extensions to process (e.g., md,html,txt)
+      --allowlist <URLS>         URLs to allow (comma-separated)
+      --allow-status <CODES>     Status codes to allow (comma-separated)
+      --exclude-pattern <REGEX>  URL patterns to exclude (regex)
+      --concurrency <COUNT>      Concurrent requests (default: CPU cores)
+      --retry <COUNT>            Retry attempts for failed requests (default: 0)
+      --retry-delay <MS>         Delay between retries in ms (default: 1000)
+      --rate-limit <MS>          Delay between requests in ms (default: 0)
+      --allow-timeout            Allow URLs that timeout
+  -q, --quiet                    Suppress progress output
+  -v, --verbose                  Enable verbose logging
+      --format <FORMAT>          Output format [default: text] [possible values: text, json]
+      --no-progress              Disable progress bars
+      --user-agent <AGENT>       Custom User-Agent header
+      --proxy <URL>              HTTP/HTTPS proxy URL
+      --insecure                 Skip SSL certificate verification
+      --config <FILE>            Use specific config file
+      --no-config                Ignore config files
+  -h, --help                     Print help
+  -V, --version                  Print version
 ```
 
-## Examples
+## 📝 Examples
 
 ### Basic File Checking
 ```bash
@@ -62,7 +97,7 @@ error: 'docs/' is a directory. Use --recursive to process directories.
 $ urlsup --recursive docs/
 
 # ✅ Process only specific file types
-$ urlsup --recursive --file-types md,txt docs/
+$ urlsup --recursive --include md,txt docs/
 
 # ✅ Process current directory recursively
 $ urlsup --recursive .
@@ -71,28 +106,40 @@ $ urlsup --recursive .
 ### File Type Filtering
 ```bash
 # Only check markdown and text files
-$ urlsup --recursive --file-types md,txt .
+$ urlsup --recursive --include md,txt .
 
 # Only check web files
-$ urlsup --recursive --file-types html,css,js website/
+$ urlsup --recursive --include html,css,js website/
 
 # Multiple extensions
-$ urlsup --recursive --file-types md,rst,txt docs/
+$ urlsup --recursive --include md,rst,txt docs/
 ```
 
 ### Advanced Options
 ```bash
 # Allow specific status codes
-$ urlsup README.md --allow 403,429
+$ urlsup README.md --allow-status 403,429
 
 # Set timeout and allow timeouts
 $ urlsup README.md --allow-timeout -t 5
 
-# Whitelist URLs (partial matches)
-$ urlsup README.md --white-list rust,crates
+# Allowlist URLs (partial matches)
+$ urlsup README.md --allowlist rust,crates
 
 # Combine recursive with filtering and options
-$ urlsup --recursive --file-types md --allow 403 --timeout 10 docs/
+$ urlsup --recursive --include md --allow-status 403 --timeout 10 docs/
+
+# Use quiet mode for scripts
+$ urlsup --quiet --recursive docs/
+
+# Enable verbose output for debugging
+$ urlsup --verbose README.md
+
+# Use JSON output format
+$ urlsup --format json README.md
+
+# Exclude URLs with patterns
+$ urlsup --exclude-pattern ".*\.local$" --exclude-pattern "^http://localhost.*" docs/
 ```
 
 ### Git Integration
@@ -113,7 +160,185 @@ $ urlsup --recursive .
 
 This means you don't need to manually exclude build artifacts, dependencies, or other generated files.
 
-## Installation
+## ⚙️ Configuration File
+
+`urlsup` supports TOML configuration files for managing complex setups. Place a `.urlsup.toml` file in your project root:
+
+```toml
+# .urlsup.toml - Project configuration for urlsup v2.0
+timeout = 30
+threads = 8
+allow_timeout = false
+file_types = ["md", "html", "txt"]
+
+# URL patterns to exclude (regex)
+exclude_patterns = [
+    "^https://example\\.com/private/.*",
+    ".*\\.local$",
+    "^http://localhost.*"
+]
+
+# URLs to allowlist
+allowlist = [
+    "https://api.github.com",
+    "https://docs.rs"
+]
+
+# HTTP status codes to allow
+allowed_status_codes = [403, 429]
+
+# Advanced network settings
+user_agent = "MyBot/1.0"
+retry_attempts = 3
+retry_delay = 1000  # milliseconds
+rate_limit_delay = 100  # milliseconds between requests
+
+# Security settings
+skip_ssl_verification = false
+proxy = "http://proxy.company.com:8080"
+
+# Output settings
+output_format = "text"  # or "json"
+verbose = false
+```
+
+### Configuration Discovery
+
+`urlsup` searches for configuration files in this order:
+1. `.urlsup.toml` in current directory
+2. `.urlsup.toml` in parent directories (up to 3 levels)
+3. Default configuration if no file found
+
+CLI arguments always override configuration file settings.
+
+## 🔧 Advanced Features
+
+### Retry Logic & Rate Limiting
+
+Handle flaky networks and respect server limits:
+
+```bash
+# Configure via CLI (basic)
+$ urlsup --timeout 60 README.md
+
+# Configure via .urlsup.toml (advanced)
+retry_attempts = 5
+retry_delay = 2000
+rate_limit_delay = 500
+```
+
+### URL Exclusion Patterns
+
+Exclude URLs matching regex patterns:
+
+```toml
+# In .urlsup.toml
+exclude_patterns = [
+    "^https://internal\\.company\\.com/.*",  # Skip internal URLs
+    ".*\\.local$",                           # Skip .local domains
+    "^http://localhost.*",                   # Skip localhost
+    "https://example\\.com/api/.*"           # Skip API endpoints
+]
+```
+
+### 📊 Progress Reporting
+
+Beautiful progress bars for large operations:
+
+```bash
+# Progress bars are enabled automatically for TTY terminals
+$ urlsup --recursive docs/
+
+# Output includes:
+# ⠋ [00:01:23] [████████████████████████████████████████] 150/150 files processed
+# ⠙ [00:00:45] [██████████████████████████              ] 245/320 URLs validated (76% successful)
+```
+
+### 🌐 Custom User Agent & Proxy Support
+
+```toml
+# In .urlsup.toml
+user_agent = "MyCompany/URLChecker 2.0"
+proxy = "http://proxy.company.com:8080"
+skip_ssl_verification = false  # Set to true for internal/dev environments
+```
+
+### 📤 Output Formats
+
+```bash
+# Text output (default) - clean, emoji-based
+$ urlsup README.md
+✓ No issues found!
+
+# JSON output for scripts and automation
+$ urlsup --format json README.md
+{"status": "success", "issues": []}
+
+# Or configure in .urlsup.toml
+output_format = "json"
+```
+
+### Verbose Logging
+
+```bash
+# Enable verbose output via CLI
+$ urlsup --verbose README.md
+
+# Or configure in .urlsup.toml
+verbose = true
+
+# Quiet mode for scripts (minimal output)
+$ urlsup --quiet README.md
+```
+
+Verbose mode provides detailed information about:
+- Files being processed
+- URLs found and filtered
+- Request progress and timing
+- Configuration settings used
+
+## 🔒 Security Features
+
+### SSL Certificate Verification
+
+```toml
+# Skip SSL verification for internal/development URLs
+skip_ssl_verification = true
+```
+
+**⚠️ Warning**: Only disable SSL verification for trusted internal environments.
+
+### Proxy Support
+
+```toml
+# HTTP/HTTPS proxy configuration
+proxy = "http://username:password@proxy.company.com:8080"
+```
+
+Supports both HTTP and HTTPS proxies with optional authentication.
+
+## ⚡ Performance Optimizations
+
+`urlsup` includes several performance optimizations:
+
+- **Optimized Deduplication**: Uses `AHashSet` for O(1) URL deduplication instead of O(n²) sorting
+- **Connection Pooling**: Reuses HTTP connections for better performance  
+- **Async Processing**: Processes multiple URLs concurrently using configurable thread counts
+- **Smart Caching**: Avoids redundant requests for duplicate URLs
+- **Progress Tracking**: Minimal overhead progress reporting for large operations
+
+## 🚨 Error Handling
+
+Comprehensive error handling with specific error types:
+
+- **Configuration errors**: Invalid TOML, missing files
+- **Network errors**: Timeouts, connection failures, DNS resolution
+- **Path errors**: Invalid file paths, permission issues
+- **Validation errors**: Malformed URLs, regex compilation failures
+
+All errors include helpful context and suggestions for resolution.
+
+## 📦 Installation
 
 Install with `cargo` to run `urlsup` on your local machine.
 
@@ -121,11 +346,11 @@ Install with `cargo` to run `urlsup` on your local machine.
 cargo install urlsup
 ```
 
-## GitHub Actions
+## 🔄 GitHub Actions
 
 See [`urlsup-action`](https://github.com/simeg/urlsup-action).
 
-## Development
+## 🛠️ Development
 
 This repo uses a Makefile as an interface for common operations.
 

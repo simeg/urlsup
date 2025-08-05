@@ -3,7 +3,7 @@ mod cli {
 
     use assert_cmd::prelude::*;
     use mockito::Server;
-    use predicates::str::{contains, ends_with, starts_with};
+    use predicates::str::contains;
 
     use std::io::Write;
     use std::process::Command;
@@ -36,8 +36,7 @@ mod cli {
 
         cmd.assert()
             .success()
-            .stdout(contains("Found 1 unique URL(s), 1 in total"));
-        cmd.assert().success().stdout(ends_with("No issues!\n"));
+            .stdout(contains("✓ No issues found!"));
         Ok(())
     }
 
@@ -54,11 +53,9 @@ mod cli {
         cmd.arg(file.path());
 
         cmd.assert().failure();
-        cmd.assert()
-            .failure()
-            .stdout(contains("Found 1 unique URL(s), 1 in total"));
-        cmd.assert().failure().stdout(ends_with(format!(
-            "> Issues\n   1. 404 - {}/404 - {} - L1\n",
+        cmd.assert().failure().stdout(contains("✗ Found 1 issues:"));
+        cmd.assert().failure().stdout(contains(format!(
+            "404 - {}/404 - {} - L1",
             server.url(),
             file_name
         )));
@@ -79,10 +76,7 @@ mod cli {
         cmd.arg(file.path());
 
         cmd.assert().failure();
-        cmd.assert()
-            .failure()
-            .stdout(contains("Found 2 unique URL(s), 2 in total"));
-        cmd.assert().failure().stdout(contains("> Issues"));
+        cmd.assert().failure().stdout(contains("✗ Found 2 issues:"));
         // Order is not deterministic so can't assert it
         cmd.assert()
             .failure()
@@ -106,19 +100,16 @@ mod cli {
         file.write_all(format!("{endpoint_200} {endpoint_401} {endpoint_404}").as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
-        cmd.arg(file.path()).arg("--white-list").arg(format!(
+        cmd.arg(file.path()).arg("--allowlist").arg(format!(
             "{}/401,{}/404",
             server.url(),
             server.url()
         ));
 
         cmd.assert().success();
-        cmd.assert().success().stdout(contains(format!(
-            "Ignoring white listed URL(s)\n   1. {}/401\n   2. {}/404",
-            server.url(),
-            server.url()
-        )));
-        cmd.assert().success().stdout(ends_with("No issues!\n"));
+        cmd.assert()
+            .success()
+            .stdout(contains("✓ No issues found!"));
         Ok(())
     }
 
@@ -135,13 +126,12 @@ mod cli {
         file.write_all(format!("{endpoint_200} {endpoint_401} {endpoint_404}").as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
-        cmd.arg(file.path()).arg("--allow").arg("401,404");
+        cmd.arg(file.path()).arg("--allow-status").arg("401,404");
 
         cmd.assert().success();
         cmd.assert()
             .success()
-            .stdout(contains("Allowing HTTP status codes\n   1. 401\n   2. 404"));
-        cmd.assert().success().stdout(ends_with("No issues!\n"));
+            .stdout(contains("✓ No issues found!"));
         Ok(())
     }
 
@@ -175,7 +165,7 @@ mod cli {
         let mut cmd = Command::cargo_bin(NAME).unwrap();
         let non_number = "not-a-number";
 
-        cmd.arg(file.path()).arg("--allow").arg(non_number);
+        cmd.arg(file.path()).arg("--allow-status").arg(non_number);
 
         cmd.assert().failure();
         cmd.assert().failure().stderr(contains(
@@ -193,19 +183,19 @@ mod cli {
         let mut cmd = Command::cargo_bin(NAME)?;
 
         cmd.arg(file.path())
-            .arg("--threads")
+            .arg("--concurrency")
             .arg("10")
             .arg("--timeout")
             .arg("20")
-            .arg("--allow")
+            .arg("--allow-status")
             .arg("200,404")
-            .arg("--white-list")
+            .arg("--allowlist")
             .arg("http://some-url.com")
             .arg("--allow-timeout");
 
         cmd.assert()
             .success()
-            .stdout(starts_with("> Using threads: 10\n> Using timeout (seconds): 20\n> Allow timeout: true\n> Ignoring white listed URL(s)\n   1. http://some-url.com\n> Allowing HTTP status codes\n   1. 200\n   2. 404"));
+            .stdout(contains("✓ No issues found!"));
         Ok(())
     }
 
@@ -241,8 +231,7 @@ mod cli {
         cmd.assert().success();
         cmd.assert()
             .success()
-            .stdout(contains("Found 1 unique URL(s), 1 in total"));
-        cmd.assert().success().stdout(ends_with("No issues!\n"));
+            .stdout(contains("✓ No issues found!"));
         Ok(())
     }
 
@@ -267,15 +256,14 @@ mod cli {
         let mut cmd = Command::cargo_bin(NAME)?;
 
         cmd.arg("--recursive")
-            .arg("--file-types")
+            .arg("--include")
             .arg("md,txt")
             .arg(temp_dir.path());
 
         cmd.assert().success();
         cmd.assert()
             .success()
-            .stdout(contains("Found 2 unique URL(s), 2 in total"));
-        cmd.assert().success().stdout(ends_with("No issues!\n"));
+            .stdout(contains("✓ No issues found!"));
         Ok(())
     }
 }

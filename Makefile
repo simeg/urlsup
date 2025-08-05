@@ -22,7 +22,7 @@ coverage:
 		echo "Installing cargo-tarpaulin..."; \
 		$(CARGO) install cargo-tarpaulin; \
 	}
-	$(CARGO) tarpaulin --verbose --all-features --workspace --timeout 120 --out html --output-dir coverage
+	$(CARGO) tarpaulin --all-features --workspace --timeout 120 --out html --output-dir coverage
 	@echo "Coverage report generated in coverage/tarpaulin-report.html"
 
 fmt:

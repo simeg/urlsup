@@ -1,6 +1,6 @@
 [package]
 name = "urlsup"
-version = "1.0.1"
+version = "2.0.0"
 description = "CLI to validate URLs in files"
 authors = ["Simon Egersand <s.egersand@gmail.com>"]
 keywords = ["cli", "ci", "github", "action", "links"]
@@ -28,12 +28,11 @@ linkify = "0.10"
 num_cpus = "1.17"
 once_cell = "1.21"
 spinners = "4.1"
-walkdir = "2.5"
 ignore = "0.4"
 term = "1.1"
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.8"
-indicatif = "0.17"
+toml = "0.9.5"
+indicatif = "0.18.0"
 regex = "1.11"
 ahash = "0.8"
 
@@ -42,3 +41,14 @@ tempfile = "3.20"
 mockito = "1.7"
 assert_cmd = "2.0"
 predicates = "3.1"
+
+# Speed-optimized release profile for maximum binary performance
+[profile.release]
+opt-level = 3             # Maximum optimization for speed
+lto = "fat"               # Full link-time optimization for maximum performance
+codegen-units = 1         # Single codegen unit for best cross-function optimization
+panic = "abort"           # Fastest panic handling
+strip = true              # Remove debug symbols
+debug = false             # No debug info for fastest compilation and execution
+overflow-checks = false   # Disable runtime overflow checks for speed
+incremental = false       # Disable incremental compilation for better optimization

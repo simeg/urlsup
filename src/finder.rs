@@ -20,7 +20,7 @@ pub trait UrlFinder {
     fn find_urls(&self, paths: Vec<&Path>) -> io::Result<Vec<UrlLocation>>;
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Finder {}
 
 impl UrlFinder for Finder {

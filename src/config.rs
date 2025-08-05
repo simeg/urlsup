@@ -22,8 +22,8 @@ pub struct Config {
     /// URL patterns to exclude (regex)
     pub exclude_patterns: Option<Vec<String>>,
 
-    /// URLs to whitelist
-    pub whitelist: Option<Vec<String>>,
+    /// URLs to allowlist  
+    pub allowlist: Option<Vec<String>>,
 
     /// HTTP status codes to allow
     pub allowed_status_codes: Option<Vec<u16>>,
@@ -61,7 +61,7 @@ impl Default for Config {
             allow_timeout: Some(false),
             file_types: None,
             exclude_patterns: None,
-            whitelist: None,
+            allowlist: None,
             allowed_status_codes: None,
             user_agent: None,
             retry_attempts: Some(0),
@@ -104,38 +104,59 @@ impl Config {
 
     /// Merge this config with CLI arguments (CLI takes precedence)
     pub fn merge_with_cli(&mut self, cli_config: &CliConfig) {
+        // Core options
         if let Some(timeout) = cli_config.timeout {
             self.timeout = Some(timeout);
         }
-        if let Some(threads) = cli_config.threads {
-            self.threads = Some(threads);
-        }
-        if cli_config.allow_timeout {
-            self.allow_timeout = Some(true);
-        }
+
+        // Filtering & inclusion
         if let Some(ref file_types) = cli_config.file_types {
             self.file_types = Some(file_types.clone());
         }
-        if let Some(ref whitelist) = cli_config.whitelist {
-            self.whitelist = Some(whitelist.clone());
+        if let Some(ref allowlist) = cli_config.allowlist {
+            self.allowlist = Some(allowlist.clone());
         }
         if let Some(ref allowed_status_codes) = cli_config.allowed_status_codes {
             self.allowed_status_codes = Some(allowed_status_codes.clone());
         }
-        if let Some(ref user_agent) = cli_config.user_agent {
-            self.user_agent = Some(user_agent.clone());
+        if let Some(ref exclude_patterns) = cli_config.exclude_patterns {
+            self.exclude_patterns = Some(exclude_patterns.clone());
         }
-        if cli_config.skip_ssl_verification {
-            self.skip_ssl_verification = Some(true);
+
+        // Performance & behavior
+        if let Some(threads) = cli_config.threads {
+            self.threads = Some(threads);
         }
-        if let Some(ref proxy) = cli_config.proxy {
-            self.proxy = Some(proxy.clone());
+        if let Some(retry_attempts) = cli_config.retry_attempts {
+            self.retry_attempts = Some(retry_attempts);
+        }
+        if let Some(retry_delay) = cli_config.retry_delay {
+            self.retry_delay = Some(retry_delay);
+        }
+        if let Some(rate_limit_delay) = cli_config.rate_limit_delay {
+            self.rate_limit_delay = Some(rate_limit_delay);
+        }
+        if cli_config.allow_timeout {
+            self.allow_timeout = Some(true);
+        }
+
+        // Output & format
+        if cli_config.verbose {
+            self.verbose = Some(true);
         }
         if let Some(ref output_format) = cli_config.output_format {
             self.output_format = Some(output_format.clone());
         }
-        if cli_config.verbose {
-            self.verbose = Some(true);
+
+        // Network & security
+        if let Some(ref user_agent) = cli_config.user_agent {
+            self.user_agent = Some(user_agent.clone());
+        }
+        if let Some(ref proxy) = cli_config.proxy {
+            self.proxy = Some(proxy.clone());
+        }
+        if cli_config.skip_ssl_verification {
+            self.skip_ssl_verification = Some(true);
         }
     }
 
@@ -176,17 +197,36 @@ impl Config {
 /// Configuration options that can come from CLI
 #[derive(Debug, Default)]
 pub struct CliConfig {
+    // Core options
     pub timeout: Option<u64>,
-    pub threads: Option<usize>,
-    pub allow_timeout: bool,
-    pub file_types: Option<Vec<String>>,
-    pub whitelist: Option<Vec<String>>,
-    pub allowed_status_codes: Option<Vec<u16>>,
-    pub user_agent: Option<String>,
-    pub skip_ssl_verification: bool,
-    pub proxy: Option<String>,
-    pub output_format: Option<String>,
-    pub verbose: bool,
+
+    // Filtering & inclusion
+    pub file_types: Option<Vec<String>>,        // --include
+    pub allowlist: Option<Vec<String>>,         // --allowlist
+    pub allowed_status_codes: Option<Vec<u16>>, // --allow-status
+    pub exclude_patterns: Option<Vec<String>>,  // --exclude-pattern
+
+    // Performance & behavior
+    pub threads: Option<usize>,        // --concurrency (was threads)
+    pub retry_attempts: Option<u8>,    // --retry
+    pub retry_delay: Option<u64>,      // --retry-delay
+    pub rate_limit_delay: Option<u64>, // --rate-limit
+    pub allow_timeout: bool,           // --allow-timeout
+
+    // Output & format
+    pub quiet: bool,                   // --quiet
+    pub verbose: bool,                 // --verbose
+    pub output_format: Option<String>, // --format
+    pub no_progress: bool,             // --no-progress
+
+    // Network & security
+    pub user_agent: Option<String>,  // --user-agent
+    pub proxy: Option<String>,       // --proxy
+    pub skip_ssl_verification: bool, // --insecure
+
+    // Configuration
+    pub config_file: Option<String>, // --config
+    pub no_config: bool,             // --no-config
 }
 
 #[cfg(test)]
@@ -251,6 +291,229 @@ mod tests {
 
         assert!(patterns[1].is_match("http://test.local"));
         assert!(!patterns[1].is_match("http://test.com"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compile_exclude_patterns_empty() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config {
+            exclude_patterns: None,
+            ..Default::default()
+        };
+
+        let patterns = config.compile_exclude_patterns()?;
+        assert_eq!(patterns.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_compile_exclude_patterns_invalid_regex() {
+        let config = Config {
+            exclude_patterns: Some(vec![r"[invalid regex".to_string()]),
+            ..Default::default()
+        };
+
+        assert!(config.compile_exclude_patterns().is_err());
+    }
+
+    #[test]
+    fn test_file_types_as_set() {
+        let config = Config {
+            file_types: Some(vec![
+                "md".to_string(),
+                "txt".to_string(),
+                "html".to_string(),
+            ]),
+            ..Default::default()
+        };
+
+        let set = config.file_types_as_set().unwrap();
+        assert_eq!(set.len(), 3);
+        assert!(set.contains("md"));
+        assert!(set.contains("txt"));
+        assert!(set.contains("html"));
+        assert!(!set.contains("py"));
+    }
+
+    #[test]
+    fn test_file_types_as_set_none() {
+        let config = Config {
+            file_types: None,
+            ..Default::default()
+        };
+
+        assert!(config.file_types_as_set().is_none());
+    }
+
+    #[test]
+    fn test_timeout_duration() {
+        let config = Config {
+            timeout: Some(45),
+            ..Default::default()
+        };
+
+        assert_eq!(config.timeout_duration(), Duration::from_secs(45));
+
+        let default_config = Config {
+            timeout: None,
+            ..Default::default()
+        };
+
+        assert_eq!(default_config.timeout_duration(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_retry_delay_duration() {
+        let config = Config {
+            retry_delay: Some(2500),
+            ..Default::default()
+        };
+
+        assert_eq!(config.retry_delay_duration(), Duration::from_millis(2500));
+
+        let default_config = Config {
+            retry_delay: None,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            default_config.retry_delay_duration(),
+            Duration::from_millis(1000)
+        );
+    }
+
+    #[test]
+    fn test_rate_limit_delay_duration() {
+        let config = Config {
+            rate_limit_delay: Some(500),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            config.rate_limit_delay_duration(),
+            Duration::from_millis(500)
+        );
+
+        let default_config = Config {
+            rate_limit_delay: None,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            default_config.rate_limit_delay_duration(),
+            Duration::from_millis(0)
+        );
+    }
+
+    #[test]
+    fn test_config_load_from_standard_locations() {
+        // This test ensures that the function doesn't panic even if no config file exists
+        let config = Config::load_from_standard_locations();
+        // Should fall back to defaults
+        assert_eq!(config.timeout, Some(30));
+        assert_eq!(config.allow_timeout, Some(false));
+    }
+
+    #[test]
+    fn test_config_merge_with_cli_all_fields() {
+        let mut config = Config::default();
+        let cli_config = CliConfig {
+            timeout: Some(60),
+            file_types: Some(vec!["md".to_string(), "html".to_string()]),
+            allowlist: Some(vec!["example.com".to_string()]),
+            allowed_status_codes: Some(vec![404, 429]),
+            exclude_patterns: Some(vec![r".*\.local$".to_string()]),
+            threads: Some(8),
+            retry_attempts: Some(3),
+            retry_delay: Some(2000),
+            rate_limit_delay: Some(100),
+            allow_timeout: true,
+            quiet: true,
+            verbose: true,
+            output_format: Some("json".to_string()),
+            no_progress: true,
+            user_agent: Some("test-agent".to_string()),
+            proxy: Some("http://proxy.test:8080".to_string()),
+            skip_ssl_verification: true,
+            config_file: Some("/path/to/config".to_string()),
+            no_config: true,
+        };
+
+        config.merge_with_cli(&cli_config);
+
+        assert_eq!(config.timeout, Some(60));
+        assert_eq!(
+            config.file_types,
+            Some(vec!["md".to_string(), "html".to_string()])
+        );
+        assert_eq!(config.allowlist, Some(vec!["example.com".to_string()]));
+        assert_eq!(config.allowed_status_codes, Some(vec![404, 429]));
+        assert_eq!(
+            config.exclude_patterns,
+            Some(vec![r".*\.local$".to_string()])
+        );
+        assert_eq!(config.threads, Some(8));
+        assert_eq!(config.retry_attempts, Some(3));
+        assert_eq!(config.retry_delay, Some(2000));
+        assert_eq!(config.rate_limit_delay, Some(100));
+        assert_eq!(config.allow_timeout, Some(true));
+        assert_eq!(config.verbose, Some(true));
+        assert_eq!(config.output_format, Some("json".to_string()));
+        assert_eq!(config.user_agent, Some("test-agent".to_string()));
+        assert_eq!(config.proxy, Some("http://proxy.test:8080".to_string()));
+        assert_eq!(config.skip_ssl_verification, Some(true));
+    }
+
+    #[test]
+    fn test_config_load_from_file_invalid_toml() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"invalid toml content [").unwrap();
+
+        let result = Config::load_from_file(file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_load_from_file_nonexistent() {
+        let result = Config::load_from_file("/path/that/does/not/exist.toml");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cli_config_default() {
+        let cli_config = CliConfig::default();
+        assert_eq!(cli_config.timeout, None);
+        assert_eq!(cli_config.file_types, None);
+        assert_eq!(cli_config.allowlist, None);
+        assert_eq!(cli_config.allowed_status_codes, None);
+        assert_eq!(cli_config.exclude_patterns, None);
+        assert_eq!(cli_config.threads, None);
+        assert_eq!(cli_config.retry_attempts, None);
+        assert_eq!(cli_config.retry_delay, None);
+        assert_eq!(cli_config.rate_limit_delay, None);
+        assert!(!cli_config.allow_timeout);
+        assert!(!cli_config.quiet);
+        assert!(!cli_config.verbose);
+        assert_eq!(cli_config.output_format, None);
+        assert!(!cli_config.no_progress);
+        assert_eq!(cli_config.user_agent, None);
+        assert_eq!(cli_config.proxy, None);
+        assert!(!cli_config.skip_ssl_verification);
+        assert_eq!(cli_config.config_file, None);
+        assert!(!cli_config.no_config);
+    }
+
+    #[test]
+    fn test_config_empty_compile_exclude_patterns() -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config {
+            exclude_patterns: Some(vec![]),
+            ..Default::default()
+        };
+
+        let patterns = config.compile_exclude_patterns()?;
+        assert_eq!(patterns.len(), 0);
 
         Ok(())
     }

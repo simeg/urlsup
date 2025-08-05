@@ -164,4 +164,96 @@ mod tests {
         reporter.log_warning("test");
         reporter.log_error("test");
     }
+
+    #[test]
+    fn test_enabled_progress_reporter() {
+        let mut reporter = ProgressReporter::new(true);
+
+        // Test file processing
+        reporter.start_file_processing(5);
+        assert!(reporter.file_progress.is_some());
+
+        reporter.update_file_progress(3);
+        reporter.finish_file_processing();
+
+        // Test URL validation
+        reporter.start_url_validation(10);
+        assert!(reporter.url_progress.is_some());
+
+        reporter.update_url_progress(7);
+        reporter.finish_url_validation(7, 10);
+    }
+
+    #[test]
+    fn test_spinner_creation() {
+        let reporter = ProgressReporter::new(true);
+        let spinner = reporter.create_spinner("Testing...");
+        assert!(spinner.is_some());
+
+        let reporter_disabled = ProgressReporter::new(false);
+        let spinner_disabled = reporter_disabled.create_spinner("Testing...");
+        assert!(spinner_disabled.is_none());
+    }
+
+    #[test]
+    fn test_logging_methods() {
+        let reporter = ProgressReporter::new(true);
+
+        // These should not panic and work correctly
+        reporter.log_info("Information message");
+        reporter.log_warning("Warning message");
+        reporter.log_error("Error message");
+    }
+
+    #[test]
+    fn test_multi_progress_access() {
+        let reporter = ProgressReporter::new(true);
+        let multi_progress = reporter.get_multi_progress();
+
+        // Should be the same instance
+        assert!(Arc::ptr_eq(&reporter.multi_progress, &multi_progress));
+    }
+
+    #[test]
+    fn test_finish_url_validation_messages() {
+        let mut reporter = ProgressReporter::new(true);
+
+        // Test success case
+        reporter.start_url_validation(5);
+        reporter.finish_url_validation(5, 5);
+
+        // Test partial success case
+        reporter.start_url_validation(10);
+        reporter.finish_url_validation(8, 10);
+    }
+
+    #[test]
+    fn test_progress_zero_values() {
+        let mut reporter = ProgressReporter::new(true);
+
+        // Test with zero values
+        reporter.start_file_processing(0);
+        reporter.update_file_progress(0);
+        reporter.finish_file_processing();
+
+        reporter.start_url_validation(0);
+        reporter.update_url_progress(0);
+        reporter.finish_url_validation(0, 0);
+    }
+
+    #[test]
+    fn test_progress_large_values() {
+        let mut reporter = ProgressReporter::new(true);
+
+        // Test with large values
+        reporter.start_file_processing(1000000);
+        reporter.update_file_progress(500000);
+        reporter.finish_file_processing();
+    }
+
+    #[test]
+    fn test_progress_reporter_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ProgressReporter>();
+    }
 }

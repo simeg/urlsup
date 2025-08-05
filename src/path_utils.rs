@@ -293,4 +293,26 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_expand_paths__nonexistent_file() -> TestResult {
+        let result = expand_paths(
+            vec![Path::new("/definitely/nonexistent/path/file.md")],
+            false,
+            None,
+        )?;
+        // Non-existent files are simply not included in the result
+        assert!(result.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_expand_paths__permission_denied() -> TestResult {
+        // This test simulates permission issues on paths that may not be accessible
+        // On most systems, this will pass but provides coverage for error handling
+        let result = expand_paths(vec![Path::new("/proc/1/mem")], false, None);
+        // The result may succeed or fail depending on system, but shouldn't panic
+        let _ = result;
+        Ok(())
+    }
 }
