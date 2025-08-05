@@ -109,7 +109,10 @@ async fn main() {
         let timeout: Duration = str_timeout
             .parse()
             .map(Duration::from_secs)
-            .unwrap_or_else(|_| panic!("Could not parse {str_timeout} into an int (u64)"));
+            .unwrap_or_else(|_| {
+                eprintln!("Error: Could not parse timeout '{str_timeout}' as a valid number");
+                std::process::exit(1);
+            });
         opts.timeout = timeout;
     }
 
@@ -118,19 +121,23 @@ async fn main() {
             .split(',')
             .filter_map(|s| match s.is_empty() {
                 true => None,
-                false => Some(
-                    s.parse::<u16>()
-                        .expect("Could not parse status code to int (u16)"),
-                ),
+                false => match s.parse::<u16>() {
+                    Ok(code) => Some(code),
+                    Err(_) => {
+                        eprintln!("Error: Could not parse status code '{s}' as a valid number");
+                        std::process::exit(1);
+                    }
+                },
             })
             .collect();
         opts.allowed_status_codes = Some(allowed);
     }
 
     if let Some(thread_count) = matches.get_one::<String>(OPT_THREADS) {
-        opts.thread_count = thread_count
-            .parse::<usize>()
-            .unwrap_or_else(|_| panic!("Could not parse {thread_count} into an int (usize)"));
+        opts.thread_count = thread_count.parse::<usize>().unwrap_or_else(|_| {
+            eprintln!("Error: Could not parse thread count '{thread_count}' as a valid number");
+            std::process::exit(1);
+        });
     }
 
     if let Some(files) = matches.get_many::<String>(OPT_FILES) {
@@ -161,7 +168,10 @@ async fn main() {
                     std::process::exit(1)
                 }
             }
-            Err(e) => panic!("{}", e),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
         }
     } else {
         eprintln!("No files provided");

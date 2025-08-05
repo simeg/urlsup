@@ -165,7 +165,7 @@ mod cli {
 
         cmd.assert().failure();
         cmd.assert().failure().stderr(contains(
-            "Could not parse 118446744073709551616 into an int (u64)",
+            "Error: Could not parse timeout '118446744073709551616' as a valid number",
         ));
     }
 
@@ -178,9 +178,9 @@ mod cli {
         cmd.arg(file.path()).arg("--allow").arg(non_number);
 
         cmd.assert().failure();
-        cmd.assert()
-            .failure()
-            .stderr(contains("Could not parse status code to int (u16)"));
+        cmd.assert().failure().stderr(contains(
+            "Error: Could not parse status code 'not-a-number' as a valid number",
+        ));
     }
 
     #[tokio::test]

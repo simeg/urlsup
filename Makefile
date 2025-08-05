@@ -1,4 +1,4 @@
-.PHONY: build check ci clippy fmt link lint publish release test
+.PHONY: audit build check ci clippy fmt link lint publish release test
 
 BIN_NAME  = urlsup
 CARGO     = $(shell which cargo)
@@ -8,6 +8,9 @@ build:
 
 check:
 	@$(CARGO) build --check
+
+audit:
+	@$(CARGO) audit --deny warnings
 
 ci: lint clippy test
 

@@ -2,6 +2,7 @@ use grep::regex::RegexMatcher;
 use grep::searcher::Searcher;
 use grep::searcher::sinks::UTF8;
 use linkify::{LinkFinder, LinkKind};
+use once_cell::sync::Lazy;
 
 use crate::UrlLocation;
 
@@ -10,6 +11,10 @@ use std::path::Path;
 
 const MARKDOWN_URL_PATTERN: &str =
     r#"(http://|https://)[a-z0-9]+([-.]{1}[a-z0-9]+)*(.[a-z]{2,5})?(:[0-9]{1,5})?(/.*)?"#;
+
+static REGEX_MATCHER: Lazy<RegexMatcher> = Lazy::new(|| {
+    RegexMatcher::new(MARKDOWN_URL_PATTERN).expect("Failed to compile URL regex pattern")
+});
 
 pub trait UrlFinder {
     fn find_urls(&self, paths: Vec<&Path>) -> io::Result<Vec<UrlLocation>>;
@@ -20,19 +25,15 @@ pub struct Finder {}
 
 impl UrlFinder for Finder {
     fn find_urls(&self, paths: Vec<&Path>) -> io::Result<Vec<UrlLocation>> {
-        let result = paths
-            .into_iter()
-            .flat_map(|path| {
-                // TODO: Don't panic here but instead let Error propagate in return Result
-                Finder::parse_lines_with_urls(path).unwrap_or_else(|_| {
-                    panic!(
-                        "Something went wrong parsing URL in file: {}",
-                        path.display()
-                    )
-                })
-            })
-            .flat_map(Finder::parse_urls)
-            .collect();
+        let mut result = Vec::new();
+
+        for path in paths {
+            let url_matches = Finder::parse_lines_with_urls(path)?;
+            for url_match in url_matches {
+                let url_locations = Finder::parse_urls(url_match);
+                result.extend(url_locations);
+            }
+        }
 
         Ok(result)
     }
@@ -42,11 +43,9 @@ type UrlMatch = (String, String, u64);
 
 impl Finder {
     fn parse_lines_with_urls(path: &Path) -> io::Result<Vec<UrlMatch>> {
-        let matcher = RegexMatcher::new(MARKDOWN_URL_PATTERN).unwrap();
-
         let mut matches = vec![];
         Searcher::new().search_path(
-            &matcher,
+            &*REGEX_MATCHER,
             path,
             UTF8(|line_number, line| {
                 let file_name = path.display().to_string();

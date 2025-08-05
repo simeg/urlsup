@@ -26,6 +26,7 @@ futures = "0.3"
 grep = "0.3"
 linkify = "0.10"
 num_cpus = "1.17"
+once_cell = "1.21"
 spinners = "4.1"
 term = "1.1"
 
