@@ -17,9 +17,9 @@ mod cli {
         let mut cmd = Command::cargo_bin(NAME)?;
 
         cmd.assert().failure();
-        cmd.assert().failure().stderr(contains(
-            "error: the following required arguments were not provided:\n  <FILES>...",
-        ));
+        cmd.assert()
+            .failure()
+            .stderr(contains("Error: No files provided"));
         Ok(())
     }
 
@@ -32,11 +32,9 @@ mod cli {
         file.write_all(endpoint.as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
-        cmd.arg(file.path());
+        cmd.arg(file.path()).arg("--format").arg("minimal");
 
-        cmd.assert()
-            .success()
-            .stdout(contains("✓ No issues found!"));
+        cmd.assert().success().stdout("");
         Ok(())
     }
 
@@ -46,19 +44,15 @@ mod cli {
         let _m404 = server.mock("GET", "/404").with_status(404).create();
         let endpoint = server.url() + "/404";
         let mut file = tempfile::NamedTempFile::new()?;
-        let file_name = file.path().display().to_string();
         file.write_all(endpoint.as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
-        cmd.arg(file.path());
+        cmd.arg(file.path()).arg("--format").arg("minimal");
 
         cmd.assert().failure();
-        cmd.assert().failure().stdout(contains("✗ Found 1 issues:"));
-        cmd.assert().failure().stdout(contains(format!(
-            "404 - {}/404 - {} - L1",
-            server.url(),
-            file_name
-        )));
+        cmd.assert()
+            .failure()
+            .stdout(contains(format!("404 {}/404", server.url())));
         Ok(())
     }
 
@@ -73,17 +67,16 @@ mod cli {
         file.write_all(format!("{endpoint_404} {endpoint_401}").as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
-        cmd.arg(file.path());
+        cmd.arg(file.path()).arg("--format").arg("minimal");
 
         cmd.assert().failure();
-        cmd.assert().failure().stdout(contains("✗ Found 2 issues:"));
         // Order is not deterministic so can't assert it
         cmd.assert()
             .failure()
-            .stdout(contains(format!("404 - {}/404", server.url())));
+            .stdout(contains(format!("404 {}/404", server.url())));
         cmd.assert()
             .failure()
-            .stdout(contains(format!("401 - {}/401", server.url())));
+            .stdout(contains(format!("401 {}/401", server.url())));
         Ok(())
     }
 
@@ -100,16 +93,14 @@ mod cli {
         file.write_all(format!("{endpoint_200} {endpoint_401} {endpoint_404}").as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
-        cmd.arg(file.path()).arg("--allowlist").arg(format!(
-            "{}/401,{}/404",
-            server.url(),
-            server.url()
-        ));
+        cmd.arg(file.path())
+            .arg("--allowlist")
+            .arg(format!("{}/401,{}/404", server.url(), server.url()))
+            .arg("--format")
+            .arg("minimal");
 
         cmd.assert().success();
-        cmd.assert()
-            .success()
-            .stdout(contains("✓ No issues found!"));
+        cmd.assert().success().stdout("");
         Ok(())
     }
 
@@ -126,12 +117,14 @@ mod cli {
         file.write_all(format!("{endpoint_200} {endpoint_401} {endpoint_404}").as_bytes())?;
         let mut cmd = Command::cargo_bin(NAME)?;
 
-        cmd.arg(file.path()).arg("--allow-status").arg("401,404");
+        cmd.arg(file.path())
+            .arg("--allow-status")
+            .arg("401,404")
+            .arg("--format")
+            .arg("minimal");
 
         cmd.assert().success();
-        cmd.assert()
-            .success()
-            .stdout(contains("✓ No issues found!"));
+        cmd.assert().success().stdout("");
         Ok(())
     }
 
@@ -142,7 +135,11 @@ mod cli {
         cmd.arg("some-file-that-doesnt-exist");
 
         cmd.assert().failure();
-        cmd.assert().failure().stderr("error: invalid value \'some-file-that-doesnt-exist\' for \'<FILES>...\': File not found [\"some-file-that-doesnt-exist\"]\n\nFor more information, try \'--help\'.\n");
+        cmd.assert().failure().stderr(contains(
+            "Error: File not found: \'some-file-that-doesnt-exist\'",
+        ));
+        // Our improved error handling provides cleaner output
+        // The help message is not shown for file validation errors
     }
 
     #[test]
@@ -154,9 +151,9 @@ mod cli {
         cmd.arg(file.path()).arg("--timeout").arg(too_big_timeout);
 
         cmd.assert().failure();
-        cmd.assert().failure().stderr(contains(
-            "Error: Could not parse timeout '118446744073709551616' as a valid number",
-        ));
+        cmd.assert()
+            .failure()
+            .stderr(contains("number too large to fit in target type"));
     }
 
     #[test]
@@ -169,7 +166,7 @@ mod cli {
 
         cmd.assert().failure();
         cmd.assert().failure().stderr(contains(
-            "Error: Could not parse status code 'not-a-number' as a valid number",
+            "Status code 'not-a-number' is not a valid HTTP status code",
         ));
     }
 
@@ -191,11 +188,11 @@ mod cli {
             .arg("200,404")
             .arg("--allowlist")
             .arg("http://some-url.com")
-            .arg("--allow-timeout");
+            .arg("--allow-timeout")
+            .arg("--format")
+            .arg("minimal");
 
-        cmd.assert()
-            .success()
-            .stdout(contains("✓ No issues found!"));
+        cmd.assert().success().stdout("");
         Ok(())
     }
 
@@ -226,12 +223,13 @@ mod cli {
 
         let mut cmd = Command::cargo_bin(NAME)?;
 
-        cmd.arg("--recursive").arg(temp_dir.path());
+        cmd.arg("--recursive")
+            .arg(temp_dir.path())
+            .arg("--format")
+            .arg("minimal");
 
         cmd.assert().success();
-        cmd.assert()
-            .success()
-            .stdout(contains("✓ No issues found!"));
+        cmd.assert().success().stdout("");
         Ok(())
     }
 
@@ -258,12 +256,12 @@ mod cli {
         cmd.arg("--recursive")
             .arg("--include")
             .arg("md,txt")
-            .arg(temp_dir.path());
+            .arg(temp_dir.path())
+            .arg("--format")
+            .arg("minimal");
 
         cmd.assert().success();
-        cmd.assert()
-            .success()
-            .stdout(contains("✓ No issues found!"));
+        cmd.assert().success().stdout("");
         Ok(())
     }
 }

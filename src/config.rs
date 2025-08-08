@@ -5,6 +5,9 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::constants::{output_formats, timeouts};
+use crate::error::Result;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Timeout in seconds for HTTP requests
@@ -54,6 +57,9 @@ pub struct Config {
 
     /// Use HEAD requests instead of GET for faster validation (some servers may not support)
     pub use_head_requests: Option<bool>,
+
+    /// Failure threshold percentage - fail only if more than X% of URLs are broken (0-100)
+    pub failure_threshold: Option<f64>,
 }
 
 impl Default for Config {
@@ -68,22 +74,40 @@ impl Default for Config {
             allowed_status_codes: None,
             user_agent: None,
             retry_attempts: Some(0),
-            retry_delay: Some(1000),
+            retry_delay: Some(timeouts::DEFAULT_RETRY_DELAY_MS),
             skip_ssl_verification: Some(false),
             proxy: None,
-            rate_limit_delay: Some(0),
-            output_format: Some("text".to_string()),
+            rate_limit_delay: Some(timeouts::DEFAULT_RATE_LIMIT_MS),
+            output_format: Some(output_formats::DEFAULT.to_string()),
             verbose: Some(false),
             use_head_requests: Some(false), // Default to GET for compatibility
+            failure_threshold: None,        // No threshold by default - fail on any broken URL
         }
     }
 }
 
 impl Config {
     /// Load configuration from file, falling back to defaults
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
-        let content = fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&content)?;
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
+        let content = fs::read_to_string(path).map_err(|e| {
+            crate::error::UrlsUpError::Config(format!(
+                "Could not read config file '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
+
+        let config: Config = toml::from_str(&content).map_err(|e| {
+            crate::error::UrlsUpError::Config(format!(
+                "Invalid TOML in config file '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
+
+        // Validate the loaded configuration
+        config.validate()?;
         Ok(config)
     }
 
@@ -143,6 +167,9 @@ impl Config {
         if cli_config.allow_timeout {
             self.allow_timeout = Some(true);
         }
+        if let Some(threshold) = cli_config.failure_threshold {
+            self.failure_threshold = Some(threshold);
+        }
 
         // Output & format
         if cli_config.verbose {
@@ -165,7 +192,7 @@ impl Config {
     }
 
     /// Compile exclude patterns into regex objects
-    pub fn compile_exclude_patterns(&self) -> Result<Vec<Regex>, Box<dyn std::error::Error>> {
+    pub fn compile_exclude_patterns(&self) -> Result<Vec<Regex>> {
         let mut compiled = Vec::new();
         if let Some(ref patterns) = self.exclude_patterns {
             for pattern in patterns {
@@ -184,7 +211,7 @@ impl Config {
 
     /// Get timeout as Duration
     pub fn timeout_duration(&self) -> Duration {
-        Duration::from_secs(self.timeout.unwrap_or(30))
+        Duration::from_secs(self.timeout.unwrap_or(timeouts::DEFAULT_TIMEOUT_SECONDS))
     }
 
     /// Get retry delay as Duration
@@ -195,6 +222,86 @@ impl Config {
     /// Get rate limit delay as Duration
     pub fn rate_limit_delay_duration(&self) -> Duration {
         Duration::from_millis(self.rate_limit_delay.unwrap_or(0))
+    }
+
+    /// Validate configuration values
+    pub fn validate(&self) -> Result<()> {
+        // Validate timeout
+        if let Some(timeout) = self.timeout {
+            if timeout == 0 {
+                return Err(crate::error::UrlsUpError::Config(
+                    "Timeout cannot be 0. Expected a positive integer representing seconds."
+                        .to_string(),
+                ));
+            }
+            if timeout > 86400 {
+                return Err(crate::error::UrlsUpError::Config(format!(
+                    "Timeout of {timeout} seconds is extremely large (>24 hours). Consider using a smaller value."
+                )));
+            }
+        }
+
+        // Validate concurrency/threads
+        if let Some(threads) = self.threads {
+            if threads == 0 {
+                return Err(crate::error::UrlsUpError::Config(
+                    "Thread count cannot be 0. Expected a positive integer.".to_string(),
+                ));
+            }
+            if threads > 1000 {
+                return Err(crate::error::UrlsUpError::Config(format!(
+                    "Thread count of {threads} is extremely high and may cause system instability. Consider using a smaller value."
+                )));
+            }
+        }
+
+        // Validate retry attempts
+        if let Some(retry) = self.retry_attempts
+            && retry > 20
+        {
+            return Err(crate::error::UrlsUpError::Config(format!(
+                "Retry attempts of {retry} is very high and may cause long delays. Consider using a smaller value."
+            )));
+        }
+
+        // Validate status codes
+        if let Some(ref codes) = self.allowed_status_codes {
+            for &code in codes {
+                if !(100..=599).contains(&code) {
+                    return Err(crate::error::UrlsUpError::Config(format!(
+                        "Status code {code} is not a valid HTTP status code. Expected a number between 100-599."
+                    )));
+                }
+            }
+        }
+
+        // Validate output format
+        if let Some(ref format) = self.output_format {
+            match format.as_str() {
+                f if output_formats::ALL.contains(&f) => {}
+                _ => {
+                    return Err(crate::error::UrlsUpError::Config(format!(
+                        "Invalid output format '{format}'. Expected one of: {}.",
+                        output_formats::ALL.join(", ")
+                    )));
+                }
+            }
+        }
+
+        // Validate failure threshold
+        if let Some(threshold) = self.failure_threshold {
+            const EPSILON: f64 = 1e-10;
+            if !(-EPSILON..=100.0 + EPSILON).contains(&threshold) {
+                return Err(crate::error::UrlsUpError::Config(format!(
+                    "Failure threshold {threshold}% is invalid. Expected a value between 0-100."
+                )));
+            }
+        }
+
+        // Validate exclude patterns by trying to compile them
+        self.compile_exclude_patterns()?;
+
+        Ok(())
     }
 }
 
@@ -211,11 +318,12 @@ pub struct CliConfig {
     pub exclude_patterns: Option<Vec<String>>,  // --exclude-pattern
 
     // Performance & behavior
-    pub threads: Option<usize>,        // --concurrency (was threads)
-    pub retry_attempts: Option<u8>,    // --retry
-    pub retry_delay: Option<u64>,      // --retry-delay
-    pub rate_limit_delay: Option<u64>, // --rate-limit
-    pub allow_timeout: bool,           // --allow-timeout
+    pub threads: Option<usize>,         // --concurrency (was threads)
+    pub retry_attempts: Option<u8>,     // --retry
+    pub retry_delay: Option<u64>,       // --retry-delay
+    pub rate_limit_delay: Option<u64>,  // --rate-limit
+    pub allow_timeout: bool,            // --allow-timeout
+    pub failure_threshold: Option<f64>, // --failure-threshold
 
     // Output & format
     pub quiet: bool,                   // --quiet
@@ -236,6 +344,7 @@ pub struct CliConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::output_formats;
     use std::io::Write;
 
     #[test]
@@ -244,11 +353,14 @@ mod tests {
         assert_eq!(config.timeout, Some(30));
         assert_eq!(config.allow_timeout, Some(false));
         assert_eq!(config.retry_attempts, Some(0));
-        assert_eq!(config.output_format, Some("text".to_string()));
+        assert_eq!(
+            config.output_format,
+            Some(output_formats::DEFAULT.to_string())
+        );
     }
 
     #[test]
-    fn test_config_load_from_file() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_config_load_from_file() -> Result<()> {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(b"timeout = 60\nallow_timeout = true\nuser_agent = \"test-agent\"")?;
 
@@ -278,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_exclude_patterns() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_compile_exclude_patterns() -> Result<()> {
         let config = Config {
             exclude_patterns: Some(vec![
                 r"^https://example\.com/.*".to_string(),
@@ -300,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_exclude_patterns_empty() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_compile_exclude_patterns_empty() -> Result<()> {
         let config = Config {
             exclude_patterns: None,
             ..Default::default()
@@ -436,13 +548,14 @@ mod tests {
             allow_timeout: true,
             quiet: true,
             verbose: true,
-            output_format: Some("json".to_string()),
+            output_format: Some(output_formats::JSON.to_string()),
             no_progress: true,
             user_agent: Some("test-agent".to_string()),
             proxy: Some("http://proxy.test:8080".to_string()),
             skip_ssl_verification: true,
             config_file: Some("/path/to/config".to_string()),
             no_config: true,
+            failure_threshold: Some(15.0),
         };
 
         config.merge_with_cli(&cli_config);
@@ -464,10 +577,11 @@ mod tests {
         assert_eq!(config.rate_limit_delay, Some(100));
         assert_eq!(config.allow_timeout, Some(true));
         assert_eq!(config.verbose, Some(true));
-        assert_eq!(config.output_format, Some("json".to_string()));
+        assert_eq!(config.output_format, Some(output_formats::JSON.to_string()));
         assert_eq!(config.user_agent, Some("test-agent".to_string()));
         assert_eq!(config.proxy, Some("http://proxy.test:8080".to_string()));
         assert_eq!(config.skip_ssl_verification, Some(true));
+        assert_eq!(config.failure_threshold, Some(15.0));
     }
 
     #[test]
@@ -510,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_empty_compile_exclude_patterns() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_config_empty_compile_exclude_patterns() -> Result<()> {
         let config = Config {
             exclude_patterns: Some(vec![]),
             ..Default::default()
@@ -520,5 +634,141 @@ mod tests {
         assert_eq!(patterns.len(), 0);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_config_validation_invalid_timeout() {
+        let config = Config {
+            timeout: Some(0),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+
+        let config = Config {
+            timeout: Some(100000), // Too large
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validation_invalid_threads() {
+        let config = Config {
+            threads: Some(0),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+
+        let config = Config {
+            threads: Some(2000), // Too many
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validation_invalid_retry_attempts() {
+        let config = Config {
+            retry_attempts: Some(50), // Too many
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validation_invalid_status_codes() {
+        let config = Config {
+            allowed_status_codes: Some(vec![50, 700]), // Invalid range
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validation_invalid_output_format() {
+        let config = Config {
+            output_format: Some("invalid".to_string()),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validation_valid_config() -> Result<()> {
+        let config = Config {
+            timeout: Some(30),
+            threads: Some(4),
+            retry_attempts: Some(3),
+            allowed_status_codes: Some(vec![200, 404, 429]),
+            output_format: Some(output_formats::JSON.to_string()),
+            ..Default::default()
+        };
+        config.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_validation_edge_case_values() -> Result<()> {
+        let config = Config {
+            timeout: Some(1),                           // Minimum valid
+            threads: Some(1),                           // Minimum valid
+            retry_attempts: Some(20),                   // Maximum valid
+            allowed_status_codes: Some(vec![100, 599]), // Edge cases
+            output_format: Some(output_formats::MINIMAL.to_string()),
+            ..Default::default()
+        };
+        config.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_load_from_file_with_validation() -> Result<()> {
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(b"timeout = 0")?; // Invalid config
+
+        let result = Config::load_from_file(file.path());
+        assert!(result.is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_merge_overwrites_correctly() {
+        let mut config = Config {
+            timeout: Some(10),
+            verbose: Some(false),
+            ..Default::default()
+        };
+
+        let cli_config = CliConfig {
+            timeout: Some(30),
+            verbose: true,
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&cli_config);
+
+        assert_eq!(config.timeout, Some(30)); // Overwritten
+        assert_eq!(config.verbose, Some(true)); // Overwritten
+    }
+
+    #[test]
+    fn test_config_merge_preserves_unset_values() {
+        let mut config = Config {
+            timeout: Some(10),
+            threads: Some(4),
+            ..Default::default()
+        };
+
+        let cli_config = CliConfig {
+            timeout: Some(30),
+            // threads not set in CLI
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&cli_config);
+
+        assert_eq!(config.timeout, Some(30)); // Overwritten
+        assert_eq!(config.threads, Some(4)); // Preserved
     }
 }

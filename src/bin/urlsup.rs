@@ -1,346 +1,312 @@
-use clap::{Arg, ArgAction, Command};
-use urlsup::config::{CliConfig, Config};
+use clap::{CommandFactory, Parser};
+use urlsup::cli::{Cli, Commands, cli_to_config};
+use urlsup::completion::{install_completion, print_completions};
+use urlsup::config::Config;
+use urlsup::constants::{error_messages, output_formats};
 use urlsup::finder::{Finder, UrlFinder};
+use urlsup::logging;
+use urlsup::output;
 use urlsup::path_utils::expand_paths;
 use urlsup::progress::ProgressReporter;
 use urlsup::validator::{ValidateUrls, Validator};
 
 use std::path::Path;
 
-// Core arguments
-const ARG_FILES: &str = "FILES";
-
-// Core options
-const OPT_RECURSIVE: &str = "recursive";
-const OPT_TIMEOUT: &str = "timeout";
-
-// Filtering & inclusion
-const OPT_INCLUDE: &str = "include";
-const OPT_ALLOWLIST: &str = "allowlist";
-const OPT_ALLOW_STATUS: &str = "allow-status";
-const OPT_EXCLUDE_PATTERN: &str = "exclude-pattern";
-
-// Performance & behavior
-const OPT_CONCURRENCY: &str = "concurrency";
-const OPT_RETRY: &str = "retry";
-const OPT_RETRY_DELAY: &str = "retry-delay";
-const OPT_RATE_LIMIT: &str = "rate-limit";
-const OPT_ALLOW_TIMEOUT: &str = "allow-timeout";
-
-// Output & format
-const OPT_QUIET: &str = "quiet";
-const OPT_VERBOSE: &str = "verbose";
-const OPT_FORMAT: &str = "format";
-const OPT_NO_PROGRESS: &str = "no-progress";
-
-// Network & security
-const OPT_USER_AGENT: &str = "user-agent";
-const OPT_PROXY: &str = "proxy";
-const OPT_INSECURE: &str = "insecure";
-
-// Configuration
-const OPT_CONFIG: &str = "config";
-const OPT_NO_CONFIG: &str = "no-config";
-
-// Removed DEFAULT_TIMEOUT as it's now handled by Config::default()
-
 #[tokio::main]
 async fn main() {
-    // Core arguments
-    let files = Arg::new(ARG_FILES)
-        .help("Files or directories to check")
-        .action(ArgAction::Append)
-        .num_args(1)
-        .required(true)
-        .index(1);
+    let cli = Cli::parse();
 
-    // Core options
-    let recursive = Arg::new(OPT_RECURSIVE)
-        .help("Recursively process directories")
-        .short('r')
-        .long(OPT_RECURSIVE)
-        .action(ArgAction::SetTrue);
+    // Handle completion commands first
+    if let Some(exit_code) = handle_completion_commands(&cli) {
+        std::process::exit(exit_code);
+    }
 
-    let timeout = Arg::new(OPT_TIMEOUT)
-        .help("Connection timeout in seconds (default: 30)")
-        .short('t')
-        .long(OPT_TIMEOUT)
-        .value_name("SECONDS")
-        .action(ArgAction::Set);
+    // Validate that files are provided when not using completions
+    if cli.files.is_empty() {
+        eprintln!("Error: No files provided");
+        eprintln!("\nFor more information, try '--help'.");
+        std::process::exit(1);
+    }
 
-    // Filtering & inclusion
-    let include = Arg::new(OPT_INCLUDE)
-        .help("File extensions to process (e.g., md,html,txt)")
-        .long(OPT_INCLUDE)
-        .value_name("EXTENSIONS")
-        .action(ArgAction::Set);
+    // Run the main URL validation logic
+    match run_urlsup_logic(&cli).await {
+        Ok(exit_code) => std::process::exit(exit_code),
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    }
+}
 
-    let allowlist = Arg::new(OPT_ALLOWLIST)
-        .help("URLs to allow (comma-separated)")
-        .long(OPT_ALLOWLIST)
-        .value_name("URLS")
-        .action(ArgAction::Set);
+/// Handle completion commands and return exit code if a completion command was processed
+pub fn handle_completion_commands(cli: &Cli) -> Option<i32> {
+    match cli.command {
+        Some(Commands::CompletionGenerate { shell }) => {
+            let mut app = Cli::command();
+            print_completions(shell, &mut app);
+            Some(0)
+        }
+        Some(Commands::CompletionInstall { shell }) => match install_completion(shell) {
+            Ok(message) => {
+                println!("{message}");
+                Some(0)
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                Some(1)
+            }
+        },
+        None => None,
+    }
+}
 
-    let allow_status = Arg::new(OPT_ALLOW_STATUS)
-        .help("Status codes to allow (comma-separated)")
-        .long(OPT_ALLOW_STATUS)
-        .value_name("CODES")
-        .action(ArgAction::Set);
+/// Main URL validation logic extracted from main() for testing
+pub async fn run_urlsup_logic(cli: &Cli) -> Result<i32, Box<dyn std::error::Error>> {
+    // Parse CLI arguments into CliConfig using the derive-based CLI
+    let cli_config = cli_to_config(cli);
 
-    let exclude_pattern = Arg::new(OPT_EXCLUDE_PATTERN)
-        .help("URL patterns to exclude (regex)")
-        .long(OPT_EXCLUDE_PATTERN)
-        .value_name("REGEX")
-        .action(ArgAction::Append);
+    // Load and merge configuration
+    let config = load_and_merge_config(&cli_config)?;
 
-    // Performance & behavior
-    let concurrency = Arg::new(OPT_CONCURRENCY)
-        .help("Concurrent requests (default: CPU cores)")
-        .long(OPT_CONCURRENCY)
-        .value_name("COUNT")
-        .action(ArgAction::Set);
+    // Setup logging and output settings
+    let output_settings = setup_output_settings(&cli_config, &config);
+    logging::init_logger(output_settings.verbose, output_settings.quiet);
 
-    let retry = Arg::new(OPT_RETRY)
-        .help("Retry attempts for failed requests (default: 0)")
-        .long(OPT_RETRY)
-        .value_name("COUNT")
-        .action(ArgAction::Set);
+    // Process files and expand paths
+    let expanded_paths = process_and_expand_files(cli, &config)?;
 
-    let retry_delay = Arg::new(OPT_RETRY_DELAY)
-        .help("Delay between retries in ms (default: 1000)")
-        .long(OPT_RETRY_DELAY)
-        .value_name("MS")
-        .action(ArgAction::Set);
+    // Display configuration info if needed
+    if output_settings.should_show_config_info() {
+        display_configuration_info(&config, &expanded_paths);
+    }
 
-    let rate_limit = Arg::new(OPT_RATE_LIMIT)
-        .help("Delay between requests in ms (default: 0)")
-        .long(OPT_RATE_LIMIT)
-        .value_name("MS")
-        .action(ArgAction::Set);
+    // Find and filter URLs
+    let filtered_urls = find_and_filter_urls(&expanded_paths, &config)?;
 
-    let allow_timeout = Arg::new(OPT_ALLOW_TIMEOUT)
-        .help("Allow URLs that timeout")
-        .long(OPT_ALLOW_TIMEOUT)
-        .action(ArgAction::SetTrue);
+    // Display URL discovery info if needed
+    if output_settings.should_show_url_info() {
+        display_url_discovery_info(&filtered_urls);
+    }
 
-    // Output & format
-    let quiet = Arg::new(OPT_QUIET)
-        .help("Suppress progress output")
-        .short('q')
-        .long(OPT_QUIET)
-        .action(ArgAction::SetTrue);
+    // Initialize progress reporter
+    let mut progress = create_progress_reporter(&output_settings);
 
-    let verbose = Arg::new(OPT_VERBOSE)
-        .help("Enable verbose logging")
-        .short('v')
-        .long(OPT_VERBOSE)
-        .action(ArgAction::SetTrue);
+    // Validate URLs and process results
+    let validation_results = validate_urls(&filtered_urls, &config, progress.as_mut()).await?;
+    let total_validated = validation_results.len();
+    let filtered_results = apply_result_filters(validation_results, &config);
 
-    let format = Arg::new(OPT_FORMAT)
-        .help("Output format")
-        .long(OPT_FORMAT)
-        .value_name("FORMAT")
-        .value_parser(["text", "json"])
-        .default_value("text")
-        .action(ArgAction::Set);
+    // Finalize progress reporting
+    finalize_progress_reporter(progress);
 
-    let no_progress = Arg::new(OPT_NO_PROGRESS)
-        .help("Disable progress bars")
-        .long(OPT_NO_PROGRESS)
-        .action(ArgAction::SetTrue);
+    // Display final results and determine exit code
+    let (_, issues_found) = display_final_results(
+        &filtered_results,
+        &output_settings,
+        &config,
+        total_validated,
+    );
 
-    // Network & security
-    let user_agent = Arg::new(OPT_USER_AGENT)
-        .help("Custom User-Agent header")
-        .long(OPT_USER_AGENT)
-        .value_name("AGENT")
-        .action(ArgAction::Set);
+    Ok(determine_exit_code(issues_found, total_validated, &config))
+}
 
-    let proxy = Arg::new(OPT_PROXY)
-        .help("HTTP/HTTPS proxy URL")
-        .long(OPT_PROXY)
-        .value_name("URL")
-        .action(ArgAction::Set);
-
-    let insecure = Arg::new(OPT_INSECURE)
-        .help("Skip SSL certificate verification")
-        .long(OPT_INSECURE)
-        .action(ArgAction::SetTrue);
-
-    // Configuration
-    let config = Arg::new(OPT_CONFIG)
-        .help("Use specific config file")
-        .long(OPT_CONFIG)
-        .value_name("FILE")
-        .action(ArgAction::Set);
-
-    let no_config = Arg::new(OPT_NO_CONFIG)
-        .help("Ignore config files")
-        .long(OPT_NO_CONFIG)
-        .action(ArgAction::SetTrue);
-
-    let matches = Command::new("urlsup")
-        .version("2.0.0")
-        .author("Simon Egersand <s.egersand@gmail.com>")
-        .about("CLI to validate URLs in files")
-        .arg(files)
-        // Core options
-        .arg(recursive)
-        .arg(timeout)
-        // Filtering & inclusion
-        .arg(include)
-        .arg(allowlist)
-        .arg(allow_status)
-        .arg(exclude_pattern)
-        // Performance & behavior
-        .arg(concurrency)
-        .arg(retry)
-        .arg(retry_delay)
-        .arg(rate_limit)
-        .arg(allow_timeout)
-        // Output & format
-        .arg(quiet)
-        .arg(verbose)
-        .arg(format)
-        .arg(no_progress)
-        // Network & security
-        .arg(user_agent)
-        .arg(proxy)
-        .arg(insecure)
-        // Configuration
-        .arg(config)
-        .arg(no_config)
-        .get_matches();
-
-    // Parse CLI arguments into CliConfig
-    let cli_config = parse_cli_args(&matches);
-
-    // Load configuration (respecting --no-config and --config flags)
+/// Load configuration from file or standard locations and merge with CLI config
+pub fn load_and_merge_config(
+    cli_config: &urlsup::config::CliConfig,
+) -> Result<Config, Box<dyn std::error::Error>> {
     let mut config = if cli_config.no_config {
         Config::default()
     } else if let Some(ref config_file) = cli_config.config_file {
-        Config::load_from_file(config_file).unwrap_or_else(|e| {
-            eprintln!("Error loading config file '{config_file}': {e}");
-            std::process::exit(1);
-        })
+        Config::load_from_file(config_file).inspect_err(|e| {
+            logging::log_error(
+                &format!("Could not load config file '{config_file}'"),
+                Some(e),
+            );
+        })?
     } else {
         Config::load_from_standard_locations()
     };
 
     // Merge CLI arguments with configuration (CLI takes precedence)
-    config.merge_with_cli(&cli_config);
+    config.merge_with_cli(cli_config);
+    Ok(config)
+}
 
-    // Determine output verbosity
+/// Settings for output formatting and display
+pub struct OutputSettings {
+    pub quiet: bool,
+    pub verbose: bool,
+    pub output_format: String,
+    pub show_progress: bool,
+}
+
+impl OutputSettings {
+    pub fn should_show_config_info(&self) -> bool {
+        !self.quiet && self.output_format == output_formats::TEXT
+    }
+
+    pub fn should_show_url_info(&self) -> bool {
+        !self.quiet && self.output_format == output_formats::TEXT
+    }
+}
+
+/// Setup output settings based on CLI and config
+pub fn setup_output_settings(
+    cli_config: &urlsup::config::CliConfig,
+    config: &Config,
+) -> OutputSettings {
     let quiet = cli_config.quiet;
     let verbose = config.verbose.unwrap_or(false);
+    let output_format = config
+        .output_format
+        .as_deref()
+        .unwrap_or(output_formats::DEFAULT)
+        .to_string();
     let show_progress = !quiet && !cli_config.no_progress;
 
-    // Get files to process
-    let files = matches
-        .get_many::<String>(ARG_FILES)
-        .map(|f| f.map(Path::new).collect::<Vec<&Path>>())
-        .unwrap_or_else(|| {
-            eprintln!("No files provided");
-            std::process::exit(1);
-        });
+    OutputSettings {
+        quiet,
+        verbose,
+        output_format,
+        show_progress,
+    }
+}
+
+/// Process and validate file paths, then expand directories
+pub fn process_and_expand_files(
+    cli: &Cli,
+    config: &Config,
+) -> Result<Vec<std::path::PathBuf>, Box<dyn std::error::Error>> {
+    // Get files to process from the derive-based CLI
+    let files: Vec<&Path> = cli.files.iter().map(Path::new).collect();
 
     // Validate input paths exist
-    for path in &files {
-        if !path.exists() {
-            eprintln!(
-                "error: invalid value '{}' for '<FILES>...': File not found [\"{}\"]\n\nFor more information, try '--help'.",
-                path.display(),
-                path.display()
-            );
-            std::process::exit(2);
-        }
-    }
-
-    // Get recursive flag
-    let recursive = matches.get_flag(OPT_RECURSIVE);
+    validate_file_paths(&files)?;
 
     // Expand directories to file paths using configuration
-    let expanded_paths = match expand_paths(files, recursive, config.file_types_as_set().as_ref()) {
-        Ok(paths) => paths,
-        Err(e) => {
-            eprintln!("Error expanding paths: {e}");
-            std::process::exit(1);
-        }
-    };
+    let expanded_paths = expand_paths(files, cli.recursive, config.file_types_as_set().as_ref())
+        .inspect_err(|e| {
+            logging::log_error("Could not expand file paths", Some(e));
+        })?;
 
     if expanded_paths.is_empty() {
-        eprintln!("No files found to process");
-        std::process::exit(1);
+        let error = "No files found to process";
+        logging::log_error(error, None);
+        return Err(error.into());
     }
 
-    if verbose {
-        eprintln!("Found {} files to process", expanded_paths.len());
-        if let Some(ref patterns) = config.exclude_patterns {
-            eprintln!("Using {} exclude patterns", patterns.len());
+    // Log file processing information
+    logging::log_file_info(expanded_paths.len(), &expanded_paths);
+
+    Ok(expanded_paths)
+}
+
+/// Validate that all file paths exist
+pub fn validate_file_paths(files: &[&Path]) -> Result<(), Box<dyn std::error::Error>> {
+    for path in files {
+        if !path.exists() {
+            let error_msg = format!("File not found: '{}'", path.display());
+            logging::log_error(&error_msg, None);
+            return Err(error_msg.into());
         }
     }
+    Ok(())
+}
 
+/// Display configuration information
+pub fn display_configuration_info(config: &Config, expanded_paths: &[std::path::PathBuf]) {
+    let threads = config.threads.unwrap_or_else(num_cpus::get);
+    // Log configuration info
+    logging::log_config_info(config, threads);
+    // Display configuration using output module
+    output::display_config_info(config, threads, expanded_paths);
+}
+
+/// Find URLs in files and apply exclude pattern filtering
+pub fn find_and_filter_urls(
+    expanded_paths: &[std::path::PathBuf],
+    config: &Config,
+) -> Result<Vec<urlsup::UrlLocation>, Box<dyn std::error::Error>> {
     // Find URLs in files
     let finder = Finder::default();
     let file_paths: Vec<&Path> = expanded_paths.iter().map(|p| p.as_path()).collect();
 
-    let url_locations = match finder.find_urls(file_paths) {
-        Ok(urls) => urls,
-        Err(e) => {
-            eprintln!("Error finding URLs: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    let original_url_count = url_locations.len();
-    if verbose {
-        eprintln!(
-            "Found {} URLs in {} files",
-            original_url_count,
-            expanded_paths.len()
-        );
-    }
+    let url_locations = finder.find_urls(file_paths).inspect_err(|e| {
+        logging::log_error("Could not find URLs in files", Some(e));
+    })?;
 
     // Apply exclude patterns if configured
     let filtered_urls = if let Some(ref _patterns) = config.exclude_patterns {
-        match config.compile_exclude_patterns() {
-            Ok(compiled_patterns) => url_locations
-                .into_iter()
-                .filter(|url_location| {
-                    !compiled_patterns
-                        .iter()
-                        .any(|pattern| pattern.is_match(&url_location.url))
-                })
-                .collect(),
-            Err(e) => {
-                eprintln!("Error compiling exclude patterns: {e}");
-                std::process::exit(1);
-            }
-        }
+        let compiled_patterns = config.compile_exclude_patterns().inspect_err(|e| {
+            logging::log_error("Could not compile exclude patterns", Some(e));
+        })?;
+
+        url_locations
+            .into_iter()
+            .filter(|url_location| {
+                !compiled_patterns
+                    .iter()
+                    .any(|pattern| pattern.is_match(&url_location.url))
+            })
+            .collect()
     } else {
         url_locations
     };
 
-    if verbose && filtered_urls.len() != original_url_count {
-        eprintln!(
-            "Filtered to {} URLs after applying exclude patterns",
-            filtered_urls.len()
-        );
-    }
+    Ok(filtered_urls)
+}
 
-    // Initialize progress reporter
-    let mut progress = if show_progress {
+/// Display URL discovery information
+pub fn display_url_discovery_info(filtered_urls: &[urlsup::UrlLocation]) {
+    // Deduplicate for unique count display
+    let unique_urls = urlsup::validator::Validator::deduplicate_urls_optimized(filtered_urls);
+    let unique_count = unique_urls.len();
+    let total_count = filtered_urls.len();
+
+    // Log URL discovery information
+    logging::log_url_discovery(unique_count, total_count);
+
+    // Display URL discovery using output module
+    output::display_url_discovery(unique_count, total_count, &unique_urls);
+}
+
+/// Create progress reporter if needed
+pub fn create_progress_reporter(output_settings: &OutputSettings) -> Option<ProgressReporter> {
+    if output_settings.show_progress && output_settings.output_format == output_formats::TEXT {
         Some(ProgressReporter::new(true))
     } else {
         None
-    };
+    }
+}
 
-    // Validate URLs using new configuration system
+/// Validate URLs using the configured validator
+pub async fn validate_urls(
+    filtered_urls: &[urlsup::UrlLocation],
+    config: &Config,
+    progress: Option<&mut ProgressReporter>,
+) -> Result<Vec<urlsup::ValidationResult>, Box<dyn std::error::Error>> {
     let validator = Validator::default();
+
+    // Log validation start
+    logging::log_validation_start(filtered_urls.len());
+
+    let start_time = std::time::Instant::now();
     let validation_results = validator
-        .validate_urls_with_config(filtered_urls, &config, progress.as_mut())
+        .validate_urls_with_config(filtered_urls.to_vec(), config, progress)
         .await;
 
+    // Log validation completion
+    let duration = start_time.elapsed();
+    logging::log_validation_complete(validation_results.len(), 0, duration.as_millis());
+
+    Ok(validation_results)
+}
+
+/// Apply allowlist, status code, and timeout filters to validation results
+pub fn apply_result_filters(
+    validation_results: Vec<urlsup::ValidationResult>,
+    config: &Config,
+) -> Vec<urlsup::ValidationResult> {
     // Apply filters based on configuration
     let mut filtered_results: Vec<_> = validation_results
         .into_iter()
@@ -371,187 +337,721 @@ async fn main() {
     if config.allow_timeout.unwrap_or(false) {
         filtered_results.retain(|result| {
             if let Some(ref description) = result.description {
-                description != "operation timed out"
+                description != error_messages::OPERATION_TIMED_OUT
             } else {
                 true
             }
         });
     }
 
-    // Output results based on format
-    let output_format = config.output_format.as_deref().unwrap_or("text");
+    filtered_results
+}
 
-    match output_format {
-        "json" => {
-            // TODO: Implement JSON output format
-            if filtered_results.is_empty() {
-                println!("{{\"status\": \"success\", \"issues\": []}}");
-            } else {
-                println!("{{\"status\": \"failure\", \"issues\": [");
-                for (i, result) in filtered_results.iter().enumerate() {
-                    let comma = if i < filtered_results.len() - 1 {
-                        ","
-                    } else {
-                        ""
-                    };
-                    println!(
-                        "  {{\"url\": \"{}\", \"file\": \"{}\", \"line\": {}, \"status_code\": {}, \"description\": \"{}\"}}{}",
-                        result.url,
-                        result.file_name,
-                        result.line,
-                        result
-                            .status_code
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| "null".to_string()),
-                        result.description.as_deref().unwrap_or(""),
-                        comma
-                    );
-                }
-                println!("  ]}}");
-            }
-        }
-        _ => {
-            if !quiet {
-                if filtered_results.is_empty() {
-                    println!("\n✓ No issues found!");
-                } else {
-                    println!("\n✗ Found {} issues:", filtered_results.len());
-                    for (i, result) in filtered_results.iter().enumerate() {
-                        println!("{:4}. {}", i + 1, result);
-                    }
-                }
-            }
-        }
-    }
-
-    // Exit with appropriate code
-    if filtered_results.is_empty() {
-        std::process::exit(0);
-    } else {
-        std::process::exit(1);
+/// Finalize progress reporting
+pub fn finalize_progress_reporter(progress: Option<ProgressReporter>) {
+    if let Some(ref progress) = progress {
+        progress.finish_and_clear();
     }
 }
 
-fn parse_cli_args(matches: &clap::ArgMatches) -> CliConfig {
-    let mut cli_config = CliConfig::default();
+/// Display final results and return counts
+pub fn display_final_results(
+    filtered_results: &[urlsup::ValidationResult],
+    output_settings: &OutputSettings,
+    config: &Config,
+    total_validated: usize,
+) -> (usize, usize) {
+    let issues_found = filtered_results.len();
 
-    // Core options
-    if let Some(timeout_str) = matches.get_one::<String>(OPT_TIMEOUT) {
-        cli_config.timeout = Some(timeout_str.parse().unwrap_or_else(|_| {
-            eprintln!("Error: Could not parse timeout '{timeout_str}' as a valid number");
-            std::process::exit(1);
-        }));
+    // Log validation completion with correct counts
+    logging::log_validation_complete(total_validated, issues_found, 0);
+
+    // Output results using the output module
+    output::display_results(
+        filtered_results,
+        &output_settings.output_format,
+        output_settings.quiet,
+        config,
+        total_validated,
+        issues_found,
+    );
+
+    (total_validated, issues_found)
+}
+
+/// Determine exit code based on failure threshold
+pub fn determine_exit_code(issues_found: usize, total_validated: usize, config: &Config) -> i32 {
+    let should_fail = if let Some(threshold) = config.failure_threshold {
+        let failure_rate = (issues_found as f64 / total_validated as f64) * 100.0;
+        failure_rate > threshold
+    } else {
+        issues_found > 0 // Default behavior - fail on any issues
+    };
+
+    if should_fail { 1 } else { 0 }
+}
+
+#[cfg(test)]
+#[allow(clippy::field_reassign_with_default)] // Test code for clarity
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::Path;
+    use tempfile::TempDir;
+    use urlsup::config::{CliConfig, Config};
+    use urlsup::{UrlLocation, ValidationResult};
+
+    fn create_test_cli() -> Cli {
+        Cli {
+            command: None,
+            files: vec!["test.md".to_string()],
+            recursive: false,
+            timeout: None,
+            concurrency: None,
+            include: None,
+            allowlist: None,
+            allow_status: None,
+            exclude_pattern: vec![],
+            retry: None,
+            retry_delay: None,
+            rate_limit: None,
+            allow_timeout: false,
+            failure_threshold: None,
+            quiet: false,
+            verbose: false,
+            format: "text".to_string(),
+            no_progress: false,
+            user_agent: None,
+            proxy: None,
+            insecure: false,
+            config: None,
+            no_config: false,
+        }
     }
 
-    // Filtering & inclusion
-    if let Some(include_str) = matches.get_one::<String>(OPT_INCLUDE) {
-        cli_config.file_types = Some(
-            include_str
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect(),
-        );
+    #[test]
+    fn test_handle_completion_commands_none() {
+        let cli = create_test_cli();
+        let result = handle_completion_commands(&cli);
+        assert_eq!(result, None);
     }
 
-    if let Some(allowlist_str) = matches.get_one::<String>(OPT_ALLOWLIST) {
-        cli_config.allowlist = Some(
-            allowlist_str
-                .split(',')
-                .filter_map(|s| {
-                    if s.trim().is_empty() {
-                        None
-                    } else {
-                        Some(s.trim().to_string())
-                    }
-                })
-                .collect(),
-        );
+    #[test]
+    fn test_handle_completion_commands_generate() {
+        let mut cli = create_test_cli();
+        cli.command = Some(Commands::CompletionGenerate {
+            shell: clap_complete::Shell::Bash,
+        });
+        let result = handle_completion_commands(&cli);
+        assert_eq!(result, Some(0));
     }
 
-    if let Some(status_str) = matches.get_one::<String>(OPT_ALLOW_STATUS) {
-        cli_config.allowed_status_codes = Some(
-            status_str
-                .split(',')
-                .filter_map(|s| {
-                    if s.trim().is_empty() {
-                        None
-                    } else {
-                        s.trim()
-                            .parse()
-                            .map_err(|_| {
-                                eprintln!(
-                                    "Error: Could not parse status code '{s}' as a valid number"
-                                );
-                                std::process::exit(1);
-                            })
-                            .ok()
-                    }
-                })
-                .collect(),
-        );
+    #[test]
+    fn test_handle_completion_commands_install_bash() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_home = temp_dir.path().to_str().unwrap();
+
+        // Save original HOME
+        let original_home = std::env::var("HOME").ok();
+
+        // Set temporary HOME
+        unsafe {
+            std::env::set_var("HOME", temp_home);
+        }
+
+        let mut cli = create_test_cli();
+        cli.command = Some(Commands::CompletionInstall {
+            shell: clap_complete::Shell::Bash,
+        });
+        let result = handle_completion_commands(&cli);
+        assert_eq!(result, Some(0));
+
+        // Restore original HOME
+        if let Some(home) = original_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 
-    if let Some(patterns) = matches.get_many::<String>(OPT_EXCLUDE_PATTERN) {
-        cli_config.exclude_patterns = Some(patterns.cloned().collect());
+    #[test]
+    fn test_handle_completion_commands_install_unsupported() {
+        let mut cli = create_test_cli();
+        cli.command = Some(Commands::CompletionInstall {
+            shell: clap_complete::Shell::PowerShell,
+        });
+        let result = handle_completion_commands(&cli);
+        assert_eq!(result, Some(1));
     }
 
-    // Performance & behavior
-    if let Some(concurrency_str) = matches.get_one::<String>(OPT_CONCURRENCY) {
-        cli_config.threads = Some(concurrency_str.parse().unwrap_or_else(|_| {
-            eprintln!("Error: Could not parse concurrency '{concurrency_str}' as a valid number");
-            std::process::exit(1);
-        }));
+    #[test]
+    fn test_load_and_merge_config_default() {
+        let cli_config = CliConfig::default();
+        let result = load_and_merge_config(&cli_config);
+        assert!(result.is_ok());
     }
 
-    if let Some(retry_str) = matches.get_one::<String>(OPT_RETRY) {
-        cli_config.retry_attempts = Some(retry_str.parse().unwrap_or_else(|_| {
-            eprintln!("Error: Could not parse retry count '{retry_str}' as a valid number");
-            std::process::exit(1);
-        }));
+    #[test]
+    fn test_load_and_merge_config_no_config_flag() {
+        let mut cli_config = CliConfig::default();
+        cli_config.no_config = true;
+        let result = load_and_merge_config(&cli_config);
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        // Should be default config since no_config is true
+        assert_eq!(config.timeout, Some(30)); // Default timeout is 30
     }
 
-    if let Some(retry_delay_str) = matches.get_one::<String>(OPT_RETRY_DELAY) {
-        cli_config.retry_delay = Some(retry_delay_str.parse().unwrap_or_else(|_| {
-            eprintln!("Error: Could not parse retry delay '{retry_delay_str}' as a valid number");
-            std::process::exit(1);
-        }));
+    #[test]
+    fn test_load_and_merge_config_with_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("test_config.toml");
+        let config_content = r#"
+            timeout = 45
+            threads = 6
+        "#;
+        fs::write(&config_path, config_content).unwrap();
+
+        let mut cli_config = CliConfig::default();
+        cli_config.config_file = Some(config_path.to_str().unwrap().to_string());
+
+        let result = load_and_merge_config(&cli_config);
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert_eq!(config.timeout, Some(45));
+        assert_eq!(config.threads, Some(6));
     }
 
-    if let Some(rate_limit_str) = matches.get_one::<String>(OPT_RATE_LIMIT) {
-        cli_config.rate_limit_delay = Some(rate_limit_str.parse().unwrap_or_else(|_| {
-            eprintln!("Error: Could not parse rate limit '{rate_limit_str}' as a valid number");
-            std::process::exit(1);
-        }));
+    #[test]
+    fn test_load_and_merge_config_invalid_file() {
+        let mut cli_config = CliConfig::default();
+        cli_config.config_file = Some("/nonexistent/config.toml".to_string());
+
+        let result = load_and_merge_config(&cli_config);
+        assert!(result.is_err());
     }
 
-    cli_config.allow_timeout = matches.get_flag(OPT_ALLOW_TIMEOUT);
+    #[test]
+    fn test_setup_output_settings_default() {
+        let cli_config = CliConfig::default();
+        let config = Config::default();
+        let settings = setup_output_settings(&cli_config, &config);
 
-    // Output & format
-    cli_config.quiet = matches.get_flag(OPT_QUIET);
-    cli_config.verbose = matches.get_flag(OPT_VERBOSE);
-    cli_config.no_progress = matches.get_flag(OPT_NO_PROGRESS);
-
-    if let Some(format_str) = matches.get_one::<String>(OPT_FORMAT) {
-        cli_config.output_format = Some(format_str.clone());
+        assert!(!settings.quiet);
+        assert!(!settings.verbose);
+        assert_eq!(settings.output_format, output_formats::DEFAULT.to_string());
+        assert!(settings.show_progress);
     }
 
-    // Network & security
-    if let Some(user_agent_str) = matches.get_one::<String>(OPT_USER_AGENT) {
-        cli_config.user_agent = Some(user_agent_str.clone());
+    #[test]
+    fn test_setup_output_settings_quiet() {
+        let mut cli_config = CliConfig::default();
+        cli_config.quiet = true;
+        let config = Config::default();
+        let settings = setup_output_settings(&cli_config, &config);
+
+        assert!(settings.quiet);
+        assert!(!settings.show_progress);
     }
 
-    if let Some(proxy_str) = matches.get_one::<String>(OPT_PROXY) {
-        cli_config.proxy = Some(proxy_str.clone());
+    #[test]
+    fn test_setup_output_settings_no_progress() {
+        let mut cli_config = CliConfig::default();
+        cli_config.no_progress = true;
+        let config = Config::default();
+        let settings = setup_output_settings(&cli_config, &config);
+
+        assert!(!settings.show_progress);
     }
 
-    cli_config.skip_ssl_verification = matches.get_flag(OPT_INSECURE);
+    #[test]
+    fn test_setup_output_settings_verbose() {
+        let cli_config = CliConfig::default();
+        let mut config = Config::default();
+        config.verbose = Some(true);
+        let settings = setup_output_settings(&cli_config, &config);
 
-    // Configuration
-    if let Some(config_file) = matches.get_one::<String>(OPT_CONFIG) {
-        cli_config.config_file = Some(config_file.clone());
+        assert!(settings.verbose);
     }
 
-    cli_config.no_config = matches.get_flag(OPT_NO_CONFIG);
+    #[test]
+    fn test_setup_output_settings_json_format() {
+        let cli_config = CliConfig::default();
+        let mut config = Config::default();
+        config.output_format = Some(output_formats::JSON.to_string());
+        let settings = setup_output_settings(&cli_config, &config);
 
-    cli_config
+        assert_eq!(settings.output_format, output_formats::JSON.to_string());
+    }
+
+    #[test]
+    fn test_output_settings_should_show_config_info() {
+        let settings = OutputSettings {
+            quiet: false,
+            verbose: false,
+            output_format: "text".to_string(),
+            show_progress: true,
+        };
+        assert!(settings.should_show_config_info());
+
+        let settings_quiet = OutputSettings {
+            quiet: true,
+            verbose: false,
+            output_format: "text".to_string(),
+            show_progress: true,
+        };
+        assert!(!settings_quiet.should_show_config_info());
+
+        let settings_json = OutputSettings {
+            quiet: false,
+            verbose: false,
+            output_format: output_formats::JSON.to_string(),
+            show_progress: true,
+        };
+        assert!(!settings_json.should_show_config_info());
+    }
+
+    #[test]
+    fn test_output_settings_should_show_url_info() {
+        let settings = OutputSettings {
+            quiet: false,
+            verbose: false,
+            output_format: "text".to_string(),
+            show_progress: true,
+        };
+        assert!(settings.should_show_url_info());
+
+        let settings_quiet = OutputSettings {
+            quiet: true,
+            verbose: false,
+            output_format: "text".to_string(),
+            show_progress: true,
+        };
+        assert!(!settings_quiet.should_show_url_info());
+
+        let settings_minimal = OutputSettings {
+            quiet: false,
+            verbose: false,
+            output_format: output_formats::MINIMAL.to_string(),
+            show_progress: true,
+        };
+        assert!(!settings_minimal.should_show_url_info());
+    }
+
+    #[test]
+    fn test_validate_file_paths_valid() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("test.md");
+        fs::write(&test_file, "# Test").unwrap();
+
+        let files = vec![test_file.as_path()];
+        let result = validate_file_paths(&files);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_file_paths_invalid() {
+        let files = vec![Path::new("/nonexistent/file.md")];
+        let result = validate_file_paths(&files);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("File not found"));
+    }
+
+    #[test]
+    fn test_validate_file_paths_mixed() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("test.md");
+        fs::write(&test_file, "# Test").unwrap();
+
+        let files = vec![test_file.as_path(), Path::new("/nonexistent/file.md")];
+        let result = validate_file_paths(&files);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_process_and_expand_files_valid() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("test.md");
+        fs::write(&test_file, "# Test").unwrap();
+
+        let mut cli = create_test_cli();
+        cli.files = vec![test_file.to_str().unwrap().to_string()];
+
+        let config = Config::default();
+        let result = process_and_expand_files(&cli, &config);
+        assert!(result.is_ok());
+        let paths = result.unwrap();
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], test_file);
+    }
+
+    #[test]
+    fn test_process_and_expand_files_nonexistent() {
+        let mut cli = create_test_cli();
+        cli.files = vec!["/nonexistent/file.md".to_string()];
+
+        let config = Config::default();
+        let result = process_and_expand_files(&cli, &config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_process_and_expand_files_recursive() {
+        let temp_dir = TempDir::new().unwrap();
+        let subdir = temp_dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+        let test_file1 = temp_dir.path().join("test1.md");
+        let test_file2 = subdir.join("test2.md");
+        fs::write(&test_file1, "# Test 1").unwrap();
+        fs::write(&test_file2, "# Test 2").unwrap();
+
+        let mut cli = create_test_cli();
+        cli.files = vec![temp_dir.path().to_str().unwrap().to_string()];
+        cli.recursive = true;
+
+        let mut config = Config::default();
+        config.file_types = Some(vec!["md".to_string()]);
+
+        let result = process_and_expand_files(&cli, &config);
+        assert!(result.is_ok());
+        let paths = result.unwrap();
+        assert!(paths.len() >= 2);
+    }
+
+    #[test]
+    fn test_find_and_filter_urls_basic() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("test.md");
+        fs::write(&test_file, "Visit https://example.com for more info").unwrap();
+
+        let paths = vec![test_file];
+        let config = Config::default();
+
+        let result = find_and_filter_urls(&paths, &config);
+        assert!(result.is_ok());
+        let urls = result.unwrap();
+        assert!(!urls.is_empty());
+        assert!(urls.iter().any(|url| url.url.contains("example.com")));
+    }
+
+    #[test]
+    fn test_find_and_filter_urls_with_exclude_patterns() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("test.md");
+        fs::write(&test_file, "Visit https://example.com and https://test.com").unwrap();
+
+        let paths = vec![test_file];
+        let mut config = Config::default();
+        config.exclude_patterns = Some(vec![".*test.*".to_string()]);
+
+        let result = find_and_filter_urls(&paths, &config);
+        assert!(result.is_ok());
+        let urls = result.unwrap();
+        assert!(urls.iter().any(|url| url.url.contains("example.com")));
+        assert!(!urls.iter().any(|url| url.url.contains("test.com")));
+    }
+
+    #[test]
+    fn test_find_and_filter_urls_invalid_regex() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("test.md");
+        fs::write(&test_file, "Visit https://example.com").unwrap();
+
+        let paths = vec![test_file];
+        let mut config = Config::default();
+        config.exclude_patterns = Some(vec!["[".to_string()]); // Invalid regex
+
+        let result = find_and_filter_urls(&paths, &config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_display_url_discovery_info() {
+        let url_locations = vec![
+            UrlLocation {
+                url: "https://example.com".to_string(),
+                file_name: "test.md".to_string(),
+                line: 1,
+            },
+            UrlLocation {
+                url: "https://example.com".to_string(), // Duplicate
+                file_name: "test2.md".to_string(),
+                line: 2,
+            },
+            UrlLocation {
+                url: "https://google.com".to_string(),
+                file_name: "test.md".to_string(),
+                line: 3,
+            },
+        ];
+
+        // Should not panic - this tests the display function
+        display_url_discovery_info(&url_locations);
+    }
+
+    #[test]
+    fn test_create_progress_reporter_enabled() {
+        let settings = OutputSettings {
+            quiet: false,
+            verbose: false,
+            output_format: "text".to_string(),
+            show_progress: true,
+        };
+
+        let progress = create_progress_reporter(&settings);
+        assert!(progress.is_some());
+    }
+
+    #[test]
+    fn test_create_progress_reporter_disabled_quiet() {
+        let settings = OutputSettings {
+            quiet: true,
+            verbose: false,
+            output_format: "text".to_string(),
+            show_progress: false,
+        };
+
+        let progress = create_progress_reporter(&settings);
+        assert!(progress.is_none());
+    }
+
+    #[test]
+    fn test_create_progress_reporter_disabled_json() {
+        let settings = OutputSettings {
+            quiet: false,
+            verbose: false,
+            output_format: output_formats::JSON.to_string(),
+            show_progress: true,
+        };
+
+        let progress = create_progress_reporter(&settings);
+        assert!(progress.is_none());
+    }
+
+    #[test]
+    fn test_apply_result_filters_basic() {
+        let results = vec![
+            ValidationResult {
+                url: "https://example.com".to_string(),
+                line: 1,
+                file_name: "test.md".to_string(),
+                status_code: Some(404),
+                description: Some("Not Found".to_string()),
+            },
+            ValidationResult {
+                url: "https://google.com".to_string(),
+                line: 1,
+                file_name: "test.md".to_string(),
+                status_code: Some(200),
+                description: None,
+            },
+        ];
+
+        let config = Config::default();
+        let filtered = apply_result_filters(results, &config);
+
+        // Should only include non-OK results
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].status_code, Some(404));
+    }
+
+    #[test]
+    fn test_apply_result_filters_with_allowlist() {
+        let results = vec![
+            ValidationResult {
+                url: "https://example.com".to_string(),
+                line: 1,
+                file_name: "test.md".to_string(),
+                status_code: Some(404),
+                description: Some("Not Found".to_string()),
+            },
+            ValidationResult {
+                url: "https://blocked.com".to_string(),
+                line: 1,
+                file_name: "test.md".to_string(),
+                status_code: Some(404),
+                description: Some("Not Found".to_string()),
+            },
+        ];
+
+        let mut config = Config::default();
+        config.allowlist = Some(vec!["example.com".to_string()]);
+
+        let filtered = apply_result_filters(results, &config);
+
+        // Should exclude allowlisted URLs
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].url.contains("blocked.com"));
+    }
+
+    #[test]
+    fn test_apply_result_filters_with_allowed_status_codes() {
+        let results = vec![
+            ValidationResult {
+                url: "https://example.com".to_string(),
+                line: 1,
+                file_name: "test.md".to_string(),
+                status_code: Some(404),
+                description: Some("Not Found".to_string()),
+            },
+            ValidationResult {
+                url: "https://server-error.com".to_string(),
+                line: 1,
+                file_name: "test.md".to_string(),
+                status_code: Some(500),
+                description: Some("Server Error".to_string()),
+            },
+        ];
+
+        let mut config = Config::default();
+        config.allowed_status_codes = Some(vec![404]);
+
+        let filtered = apply_result_filters(results, &config);
+
+        // Should exclude allowed status codes
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].status_code, Some(500));
+    }
+
+    #[test]
+    fn test_apply_result_filters_with_timeout_allowed() {
+        let results = vec![
+            ValidationResult {
+                url: "https://timeout.com".to_string(),
+                line: 1,
+                file_name: "test.md".to_string(),
+                status_code: None,
+                description: Some(error_messages::OPERATION_TIMED_OUT.to_string()),
+            },
+            ValidationResult {
+                url: "https://error.com".to_string(),
+                line: 1,
+                file_name: "test.md".to_string(),
+                status_code: Some(404),
+                description: Some("Not Found".to_string()),
+            },
+        ];
+
+        let mut config = Config::default();
+        config.allow_timeout = Some(true);
+
+        let filtered = apply_result_filters(results, &config);
+
+        // Should exclude timeout errors
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].status_code, Some(404));
+    }
+
+    #[test]
+    fn test_finalize_progress_reporter_some() {
+        let progress_settings = OutputSettings {
+            quiet: false,
+            verbose: false,
+            output_format: "text".to_string(),
+            show_progress: true,
+        };
+
+        let progress = create_progress_reporter(&progress_settings);
+
+        // Should not panic
+        finalize_progress_reporter(progress);
+    }
+
+    #[test]
+    fn test_finalize_progress_reporter_none() {
+        // Should not panic
+        finalize_progress_reporter(None);
+    }
+
+    #[test]
+    fn test_display_final_results() {
+        let results = vec![ValidationResult {
+            url: "https://example.com".to_string(),
+            line: 1,
+            file_name: "test.md".to_string(),
+            status_code: Some(404),
+            description: Some("Not Found".to_string()),
+        }];
+
+        let settings = OutputSettings {
+            quiet: false,
+            verbose: false,
+            output_format: "text".to_string(),
+            show_progress: true,
+        };
+
+        let config = Config::default();
+
+        let (total, issues) = display_final_results(&results, &settings, &config, 1);
+        assert_eq!(total, 1);
+        assert_eq!(issues, 1);
+    }
+
+    #[test]
+    fn test_determine_exit_code_no_issues() {
+        let config = Config::default();
+        let exit_code = determine_exit_code(0, 10, &config);
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn test_determine_exit_code_with_issues() {
+        let config = Config::default();
+        let exit_code = determine_exit_code(3, 10, &config);
+        assert_eq!(exit_code, 1);
+    }
+
+    #[test]
+    fn test_determine_exit_code_with_threshold_below() {
+        let mut config = Config::default();
+        config.failure_threshold = Some(50.0); // 50%
+
+        // 20% failure rate (2 out of 10) - should pass
+        let exit_code = determine_exit_code(2, 10, &config);
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn test_determine_exit_code_with_threshold_above() {
+        let mut config = Config::default();
+        config.failure_threshold = Some(50.0); // 50%
+
+        // 70% failure rate (7 out of 10) - should fail
+        let exit_code = determine_exit_code(7, 10, &config);
+        assert_eq!(exit_code, 1);
+    }
+
+    #[test]
+    fn test_determine_exit_code_with_threshold_exact() {
+        let mut config = Config::default();
+        config.failure_threshold = Some(50.0); // 50%
+
+        // Exactly 50% failure rate (5 out of 10) - should pass (not greater than)
+        let exit_code = determine_exit_code(5, 10, &config);
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn test_determine_exit_code_zero_total() {
+        let mut config = Config::default();
+        config.failure_threshold = Some(50.0);
+
+        // Edge case: 0 total URLs
+        let exit_code = determine_exit_code(0, 0, &config);
+        // This would result in NaN, but 0 issues should pass
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn test_display_configuration_info() {
+        let config = Config::default();
+        let paths = vec![std::path::PathBuf::from("test.md")];
+
+        // Should not panic
+        display_configuration_info(&config, &paths);
+    }
 }

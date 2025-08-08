@@ -29,6 +29,9 @@ pub enum UrlsUpError {
 
     /// Invalid argument error
     InvalidArgument(String),
+
+    /// File walking/ignore error
+    FileWalking(ignore::Error),
 }
 
 impl fmt::Display for UrlsUpError {
@@ -43,6 +46,7 @@ impl fmt::Display for UrlsUpError {
             UrlsUpError::TomlParsing(err) => write!(f, "TOML parsing error: {err}"),
             UrlsUpError::FileNotFound(path) => write!(f, "File not found: {path}"),
             UrlsUpError::InvalidArgument(msg) => write!(f, "Invalid argument: {msg}"),
+            UrlsUpError::FileWalking(err) => write!(f, "File walking error: {err}"),
         }
     }
 }
@@ -54,6 +58,7 @@ impl std::error::Error for UrlsUpError {
             UrlsUpError::Http(err) => Some(err),
             UrlsUpError::Regex(err) => Some(err),
             UrlsUpError::TomlParsing(err) => Some(err),
+            UrlsUpError::FileWalking(err) => Some(err),
             _ => None,
         }
     }
@@ -80,6 +85,12 @@ impl From<regex::Error> for UrlsUpError {
 impl From<toml::de::Error> for UrlsUpError {
     fn from(err: toml::de::Error) -> Self {
         UrlsUpError::TomlParsing(err)
+    }
+}
+
+impl From<ignore::Error> for UrlsUpError {
+    fn from(err: ignore::Error) -> Self {
+        UrlsUpError::FileWalking(err)
     }
 }
 
@@ -155,10 +166,8 @@ mod tests {
     }
 
     #[test]
-    fn test_all_error_variants_display() {
-        let io_error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+    fn test_string_error_variants_display() {
         let errors = vec![
-            UrlsUpError::Io(io_error),
             UrlsUpError::Config("Bad config".to_string()),
             UrlsUpError::Validation("Invalid URL".to_string()),
             UrlsUpError::PathExpansion("Path error".to_string()),

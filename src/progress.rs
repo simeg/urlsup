@@ -83,6 +83,14 @@ impl ProgressReporter {
         }
     }
 
+    pub fn finish_and_clear(&self) {
+        if self.enabled {
+            // Clear the progress bars and add a blank line
+            self.multi_progress.clear().unwrap_or(());
+            println!();
+        }
+    }
+
     pub fn log_info(&self, message: &str) {
         if self.enabled {
             self.multi_progress

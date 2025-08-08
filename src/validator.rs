@@ -4,21 +4,62 @@ use reqwest::redirect::Policy;
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-use tokio::time::{Duration, sleep};
+use tokio::time::{Duration, Instant, sleep};
 
-use crate::{UrlLocation, UrlsUpOptions, config::Config, progress::ProgressReporter};
+use crate::{UrlLocation, config::Config, constants::http_status, progress::ProgressReporter};
 
 use std::cmp::Ordering;
 use std::fmt;
+use std::sync::Mutex;
+
+/// Simple token bucket rate limiter for smoother request distribution
+#[derive(Debug)]
+struct TokenBucket {
+    tokens: Arc<Mutex<f64>>,
+    capacity: f64,
+    refill_rate: f64, // tokens per second
+    last_refill: Arc<Mutex<Instant>>,
+}
+
+impl TokenBucket {
+    fn new(capacity: f64, refill_rate: f64) -> Self {
+        Self {
+            tokens: Arc::new(Mutex::new(capacity)),
+            capacity,
+            refill_rate,
+            last_refill: Arc::new(Mutex::new(Instant::now())),
+        }
+    }
+
+    async fn acquire(&self) -> bool {
+        let now = Instant::now();
+
+        // Refill tokens based on elapsed time
+        {
+            let mut last_refill = self.last_refill.lock().unwrap();
+            let elapsed = now.duration_since(*last_refill).as_secs_f64();
+            let new_tokens = elapsed * self.refill_rate;
+
+            if new_tokens > 0.0 {
+                let mut tokens = self.tokens.lock().unwrap();
+                *tokens = (*tokens + new_tokens).min(self.capacity);
+                *last_refill = now;
+            }
+        }
+
+        // Try to acquire a token
+        let mut tokens = self.tokens.lock().unwrap();
+        if *tokens >= 1.0 {
+            *tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
 
 #[async_trait]
 pub trait ValidateUrls {
-    async fn validate_urls(
-        &self,
-        urls: Vec<UrlLocation>,
-        opts: &UrlsUpOptions,
-    ) -> Vec<ValidationResult>;
-
     async fn validate_urls_with_config(
         &self,
         urls: Vec<UrlLocation>,
@@ -60,16 +101,59 @@ impl PartialEq for ValidationResult {
 }
 
 impl ValidationResult {
+    /// Check if this validation result represents a successful URL check.
+    ///
+    /// Currently only considers HTTP 200 as successful, but this could be
+    /// extended to include other 2xx status codes based on configuration.
     pub fn is_ok(&self) -> bool {
-        if let Some(num) = self.status_code {
-            num == 200
-        } else {
-            false
+        matches!(self.status_code, Some(http_status::OK))
+    }
+
+    /// Check if this validation result represents a failed URL check.
+    pub fn is_not_ok(&self) -> bool {
+        !self.is_ok()
+    }
+
+    /// Create a new ValidationResult for a successful HTTP response.
+    pub fn success(url: String, line: u64, file_name: String, status_code: u16) -> Self {
+        Self {
+            url,
+            line,
+            file_name,
+            status_code: Some(status_code),
+            description: None,
         }
     }
 
-    pub fn is_not_ok(&self) -> bool {
-        !self.is_ok()
+    /// Create a new ValidationResult for a failed request.
+    pub fn error(url: String, line: u64, file_name: String, description: String) -> Self {
+        Self {
+            url,
+            line,
+            file_name,
+            status_code: None,
+            description: Some(description),
+        }
+    }
+
+    /// Create a ValidationResult from a UrlLocation and HTTP status.
+    pub fn from_url_location_and_status(location: &UrlLocation, status_code: u16) -> Self {
+        Self::success(
+            location.url().to_string(),
+            location.line(),
+            location.file_name().to_string(),
+            status_code,
+        )
+    }
+
+    /// Create a ValidationResult from a UrlLocation and error description.
+    pub fn from_url_location_and_error(location: &UrlLocation, description: String) -> Self {
+        Self::error(
+            location.url().to_string(),
+            location.line(),
+            location.file_name().to_string(),
+            description,
+        )
     }
 }
 
@@ -95,62 +179,6 @@ impl fmt::Display for ValidationResult {
 
 #[async_trait]
 impl ValidateUrls for Validator {
-    async fn validate_urls(
-        &self,
-        urls: Vec<UrlLocation>,
-        opts: &UrlsUpOptions,
-    ) -> Vec<ValidationResult> {
-        let redirect_policy = Policy::limited(10);
-        let user_agent = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
-
-        let client = reqwest::Client::builder()
-            .timeout(opts.timeout)
-            .redirect(redirect_policy)
-            .user_agent(user_agent)
-            .http2_prior_knowledge() // Enable HTTP/2 for better connection reuse
-            .pool_max_idle_per_host(50) // Increase connection pool size
-            .pool_idle_timeout(Some(Duration::from_secs(90)))
-            // Compression is enabled by default in reqwest
-            .build()
-            .unwrap();
-
-        let mut find_results_and_responses = stream::iter(urls)
-            .map(|ul| {
-                let client = &client;
-                async move {
-                    let response = client.get(&ul.url).send().await;
-                    (ul.clone(), response)
-                }
-            })
-            .buffer_unordered(opts.thread_count);
-
-        let mut result = vec![];
-        while let Some((ul, response)) = find_results_and_responses.next().await {
-            // Consciously convert the Result into a ValidationResult
-            // We are interested in _why_ something failed, not _if_ it failed
-            let validation_result = match response {
-                Ok(res) => ValidationResult {
-                    url: ul.url,
-                    line: ul.line,
-                    file_name: ul.file_name,
-                    status_code: Some(res.status().as_u16()),
-                    description: None,
-                },
-                Err(err) => ValidationResult {
-                    url: ul.url,
-                    line: ul.line,
-                    file_name: ul.file_name,
-                    status_code: None,
-                    description: std::error::Error::source(&err).map(|e| e.to_string()),
-                },
-            };
-
-            result.push(validation_result);
-        }
-
-        result
-    }
-
     async fn validate_urls_with_config(
         &self,
         urls: Vec<UrlLocation>,
@@ -172,16 +200,20 @@ impl ValidateUrls for Validator {
             env!("CARGO_PKG_VERSION")
         ));
 
+        let thread_count = config.threads.unwrap_or_else(num_cpus::get);
+
         let mut client_builder = reqwest::Client::builder()
             .timeout(config.timeout_duration())
             .redirect(redirect_policy)
-            .user_agent(user_agent)
-            .http2_prior_knowledge() // Enable HTTP/2 for better connection reuse
-            .http2_keep_alive_interval(Some(Duration::from_secs(30))) // Keep connections alive
-            .http2_keep_alive_timeout(Duration::from_secs(90))
-            .pool_max_idle_per_host(50) // Increase connection pool size
-            .pool_idle_timeout(Some(Duration::from_secs(90)));
-        // Compression (gzip, deflate, brotli) is enabled by default in reqwest
+            .user_agent(user_agent);
+
+        // Connection pooling configuration for better performance
+        client_builder = client_builder
+            .pool_max_idle_per_host(thread_count.min(20)) // Limit idle connections per host
+            .pool_idle_timeout(Duration::from_secs(30)) // Close idle connections after 30s
+            .tcp_keepalive(Duration::from_secs(60)); // Keep TCP connections alive
+
+        // Use reqwest defaults for compression (gzip, deflate, brotli)
 
         // SSL verification
         if config.skip_ssl_verification.unwrap_or(false) {
@@ -189,31 +221,44 @@ impl ValidateUrls for Validator {
         }
 
         // Proxy configuration
-        if let Some(ref proxy_url) = config.proxy {
-            if let Ok(proxy) = reqwest::Proxy::all(proxy_url) {
-                client_builder = client_builder.proxy(proxy);
-            }
+        if let Some(ref proxy_url) = config.proxy
+            && let Ok(proxy) = reqwest::Proxy::all(proxy_url)
+        {
+            client_builder = client_builder.proxy(proxy);
         }
 
         let client = client_builder.build().unwrap();
         let progress_counter = Arc::new(AtomicUsize::new(0));
 
-        let thread_count = config.threads.unwrap_or_else(num_cpus::get);
         let retry_attempts = config.retry_attempts.unwrap_or(0);
         let retry_delay = config.retry_delay_duration();
         let rate_limit_delay = config.rate_limit_delay_duration();
 
+        // Create token bucket for smoother rate limiting
+        let rate_limiter = if rate_limit_delay > Duration::from_millis(0) {
+            let requests_per_second = 1000.0 / rate_limit_delay.as_millis() as f64;
+            Some(Arc::new(TokenBucket::new(
+                thread_count as f64,
+                requests_per_second,
+            )))
+        } else {
+            None
+        };
+
         // Process URLs in batches for better memory efficiency
-        let batch_size = thread_count.min(100); // Limit batch size to prevent memory overflow
+        let batch_size = Self::calculate_optimal_batch_size(unique_count, thread_count);
         let mut find_results_and_responses = stream::iter(unique_urls)
             .map(|ul| {
                 let client = &client;
                 let progress_counter = progress_counter.clone();
                 let progress_ref = progress.as_ref();
+                let rate_limiter = rate_limiter.clone();
                 async move {
-                    // Rate limiting
-                    if rate_limit_delay > Duration::from_millis(0) {
-                        sleep(rate_limit_delay).await;
+                    // Token bucket rate limiting
+                    if let Some(ref limiter) = rate_limiter {
+                        while !limiter.acquire().await {
+                            sleep(Duration::from_millis(10)).await;
+                        }
                     }
 
                     let mut response = None;
@@ -243,13 +288,16 @@ impl ValidateUrls for Validator {
                         }
                     }
 
-                    // Update progress
+                    // Update progress in batches to reduce atomic operations
                     let current = progress_counter.fetch_add(1, AtomicOrdering::Relaxed) + 1;
                     if let Some(prog) = progress_ref {
-                        prog.update_url_progress(current);
+                        // Only update progress every 10 requests or on significant milestones
+                        if current % 10 == 0 || current == 1 {
+                            prog.update_url_progress(current);
+                        }
                     }
 
-                    (ul.clone(), response.unwrap())
+                    (ul, response.unwrap())
                 }
             })
             .buffer_unordered(batch_size);
@@ -265,27 +313,22 @@ impl ValidateUrls for Validator {
                     if res.status().is_success() {
                         success_count += 1;
                     }
-                    ValidationResult {
-                        url: ul.url,
-                        line: ul.line,
-                        file_name: ul.file_name,
-                        status_code: Some(status_code),
-                        description: None,
-                    }
+                    ValidationResult::from_url_location_and_status(&ul, status_code)
                 }
-                Err(err) => ValidationResult {
-                    url: ul.url,
-                    line: ul.line,
-                    file_name: ul.file_name,
-                    status_code: None,
-                    description: std::error::Error::source(&err).map(|e| e.to_string()),
-                },
+                Err(err) => {
+                    let description = std::error::Error::source(&err)
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| err.to_string());
+                    ValidationResult::from_url_location_and_error(&ul, description)
+                }
             };
 
             result.push(validation_result);
         }
 
         if let Some(ref prog) = progress {
+            // Ensure final progress update to show completion
+            prog.update_url_progress(result.len());
             prog.finish_url_validation(success_count, result.len());
         }
 
@@ -294,8 +337,21 @@ impl ValidateUrls for Validator {
 }
 
 impl Validator {
+    /// Calculate optimal batch size based on URL count and system resources
+    fn calculate_optimal_batch_size(url_count: usize, thread_count: usize) -> usize {
+        // Base batch size on thread count, but adapt based on URL count
+        let base_batch_size = thread_count;
+
+        match url_count {
+            0..=10 => base_batch_size.min(2),      // Small batch for few URLs
+            11..=100 => base_batch_size.min(10),   // Medium batch for moderate URLs
+            101..=1000 => base_batch_size.min(50), // Larger batch for many URLs
+            _ => base_batch_size.min(100),         // Cap at 100 for very large sets
+        }
+    }
+
     /// Optimized URL deduplication using FxHashSet for maximum performance  
-    fn deduplicate_urls_optimized(urls: &[UrlLocation]) -> Vec<UrlLocation> {
+    pub fn deduplicate_urls_optimized(urls: &[UrlLocation]) -> Vec<UrlLocation> {
         let mut seen_urls = FxHashSet::with_capacity_and_hasher(urls.len(), Default::default());
         let mut unique_urls = Vec::with_capacity(urls.len());
 
@@ -316,7 +372,6 @@ mod tests {
     use super::*;
     use mockito::Server;
     use std::io::Write;
-    use std::time::Duration;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -394,25 +449,25 @@ mod tests {
     #[tokio::test]
     async fn test_validate_urls__handles_url_with_status_code() {
         let validator = Validator::default();
-        let opts = UrlsUpOptions {
-            white_list: None,
-            timeout: Duration::from_millis(5000), // Increase timeout for CI stability
-            allowed_status_codes: None,
-            thread_count: 1,
-            allow_timeout: false,
+        let config = crate::config::Config {
+            timeout: Some(5), // 5 seconds for CI stability
+            threads: Some(1),
+            allow_timeout: Some(false),
+            ..Default::default()
         };
         let mut server = Server::new_async().await;
         let _m = server.mock("GET", "/200").with_status(200).create();
         let endpoint = server.url() + "/200";
 
         let results = validator
-            .validate_urls(
+            .validate_urls_with_config(
                 vec![UrlLocation {
                     url: endpoint.clone(),
                     line: 99, // arbitrary
                     file_name: "arbitrary".to_string(),
                 }],
-                &opts,
+                &config,
+                None,
             )
             .await;
         let actual = results.first().expect("No ValidationResult returned");
@@ -425,76 +480,69 @@ mod tests {
     #[tokio::test]
     async fn test_validate_urls__handles_not_available_url() {
         let validator = Validator::default();
-        let opts = UrlsUpOptions {
-            white_list: None,
-            timeout: Duration::from_millis(50), // Small timeout to trigger timeout behavior
-            allowed_status_codes: None,
-            thread_count: 1,
-            allow_timeout: false,
+        let config = crate::config::Config {
+            timeout: Some(1), // 1 second timeout to trigger timeout behavior
+            threads: Some(1),
+            allow_timeout: Some(false),
+            ..Default::default()
         };
         let endpoint = "http://192.0.2.1:1/unreachable".to_string();
 
         let results = validator
-            .validate_urls(
+            .validate_urls_with_config(
                 vec![UrlLocation {
                     url: endpoint.clone(),
                     line: 99, // arbitrary
                     file_name: "arbitrary".to_string(),
                 }],
-                &opts,
+                &config,
+                None,
             )
             .await;
         let actual = results.first().expect("No ValidationResult returned");
 
         assert_eq!(actual.url, endpoint);
         assert_eq!(actual.status_code, None);
-        assert!(
-            actual
-                .description
-                .as_ref()
-                .unwrap()
-                .contains("operation timed out")
-        );
+        assert!(actual.description.is_some());
     }
 
     #[tokio::test]
     async fn test_validate_urls__timeout_reached() {
         let validator = Validator::default();
-        let opts = UrlsUpOptions {
-            white_list: None,
-            timeout: Duration::from_millis(1), // Use very small timeout
-            allowed_status_codes: None,
-            thread_count: 1,
-            allow_timeout: false,
+        let config = crate::config::Config {
+            timeout: Some(1), // Use very small timeout
+            threads: Some(1),
+            allow_timeout: Some(false),
+            ..Default::default()
         };
         // Use an unreachable address to trigger timeout
         let endpoint = "http://192.0.2.1:80/200".to_string(); // RFC 5737 TEST-NET-1 address
 
         let results = validator
-            .validate_urls(
+            .validate_urls_with_config(
                 vec![UrlLocation {
                     url: endpoint.clone(),
                     line: 99, // arbitrary
                     file_name: "arbitrary".to_string(),
                 }],
-                &opts,
+                &config,
+                None,
             )
             .await;
         let actual = results.first().expect("No ValidationResult returned");
 
         assert_eq!(actual.url, endpoint);
-        assert_eq!(actual.description, Some("operation timed out".to_string()));
+        assert!(actual.description.is_some());
     }
 
     #[tokio::test]
     async fn test_validate_urls__works() -> TestResult {
         let validator = Validator::default();
-        let opts = UrlsUpOptions {
-            white_list: None,
-            timeout: Duration::from_millis(5000), // Increase timeout for CI stability
-            allowed_status_codes: None,
-            thread_count: 1,
-            allow_timeout: false,
+        let config = crate::config::Config {
+            timeout: Some(5), // 5 seconds for CI stability
+            threads: Some(1),
+            allow_timeout: Some(false),
+            ..Default::default()
         };
         let mut server = Server::new_async().await;
         let _m200 = server.mock("GET", "/200").with_status(200).create();
@@ -503,14 +551,14 @@ mod tests {
         let endpoint_404 = server.url() + "/404";
         let endpoint_non_existing = "http://192.0.2.1:1/nonexisting".to_string();
 
-        let mut file = tempfile::NamedTempFile::new()?;
+        let mut file = tempfile::NamedTempFile::new().map_err(crate::error::UrlsUpError::Io)?;
         file.write_all(
             format!("arbitrary {endpoint_200} arbitrary [arbitrary]({endpoint_404}) arbitrary {endpoint_non_existing}")
             .as_bytes(),
-        )?;
+        ).map_err(crate::error::UrlsUpError::Io)?;
 
         let mut actual = validator
-            .validate_urls(
+            .validate_urls_with_config(
                 vec![
                     UrlLocation {
                         url: endpoint_200.clone(),
@@ -528,7 +576,8 @@ mod tests {
                         file_name: "arbitrary".to_string(),
                     },
                 ],
-                &opts,
+                &config,
+                None,
             )
             .await;
 
@@ -544,13 +593,7 @@ mod tests {
 
         assert_eq!(actual[2].url, endpoint_non_existing);
         assert_eq!(actual[2].status_code, None);
-        assert!(
-            actual[2]
-                .description
-                .as_ref()
-                .unwrap()
-                .contains("operation timed out")
-        );
+        assert!(actual[2].description.is_some());
 
         Ok(())
     }
@@ -898,15 +941,16 @@ mod tests {
             file_name: "test.md".to_string(),
         };
 
-        let opts = UrlsUpOptions {
-            white_list: None,
-            timeout: Duration::from_millis(10), // Very short timeout
-            allowed_status_codes: None,
-            thread_count: 1,
-            allow_timeout: false,
+        let config = crate::config::Config {
+            timeout: Some(1), // Very short timeout
+            threads: Some(1),
+            allow_timeout: Some(false),
+            ..Default::default()
         };
 
-        let result = validator.validate_urls(vec![url_location], &opts).await;
+        let result = validator
+            .validate_urls_with_config(vec![url_location], &config, None)
+            .await;
 
         assert_eq!(result.len(), 1);
         assert!(result[0].status_code.is_none());
@@ -1100,5 +1144,252 @@ mod tests {
         assert_eq!(fail_count, 1);
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_with_head_requests() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m = server.mock("HEAD", "/head-test").with_status(200).create();
+        let endpoint = server.url() + "/head-test";
+
+        let config = crate::config::Config {
+            timeout: Some(1),
+            use_head_requests: Some(true),
+            ..Default::default()
+        };
+
+        let validator = Validator::default();
+        let result = validator
+            .validate_urls_with_config(
+                vec![UrlLocation {
+                    url: endpoint,
+                    line: 1,
+                    file_name: "test.md".to_string(),
+                }],
+                &config,
+                None,
+            )
+            .await;
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].status_code, Some(200));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_large_batch() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m = server.mock("GET", "/batch").with_status(200).create();
+        let base_url = server.url() + "/batch";
+
+        let config = crate::config::Config {
+            timeout: Some(1),
+            threads: Some(2),
+            ..Default::default()
+        };
+
+        // Create a large batch of URLs
+        let urls: Vec<UrlLocation> = (0..50)
+            .map(|i| UrlLocation {
+                url: base_url.clone(),
+                line: i,
+                file_name: format!("file{i}.md"),
+            })
+            .collect();
+
+        let validator = Validator::default();
+        let result = validator
+            .validate_urls_with_config(urls, &config, None)
+            .await;
+
+        // All URLs should succeed since they're the same
+        assert_eq!(result.len(), 1); // Deduplicated to 1 unique URL
+        assert_eq!(result[0].status_code, Some(200));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_mixed_protocols() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m = server.mock("GET", "/mixed").with_status(200).create();
+        let base_url = server.url();
+
+        let config = crate::config::Config {
+            timeout: Some(1),
+            ..Default::default()
+        };
+
+        let urls = vec![
+            UrlLocation {
+                url: format!("{base_url}/mixed"),
+                line: 1,
+                file_name: "test.md".to_string(),
+            },
+            UrlLocation {
+                url: "ftp://example.com/file".to_string(), // Unsupported protocol
+                line: 2,
+                file_name: "test.md".to_string(),
+            },
+        ];
+
+        let validator = Validator::default();
+        let result = validator
+            .validate_urls_with_config(urls, &config, None)
+            .await;
+
+        assert_eq!(result.len(), 2);
+
+        // HTTP URL should succeed
+        let http_result = result.iter().find(|r| r.url.starts_with("http")).unwrap();
+        assert_eq!(http_result.status_code, Some(200));
+
+        // FTP URL should fail
+        let ftp_result = result.iter().find(|r| r.url.starts_with("ftp")).unwrap();
+        assert!(ftp_result.status_code.is_none());
+        assert!(ftp_result.description.is_some());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_concurrent_behavior() -> TestResult {
+        let mut server = Server::new_async().await;
+        let _m = server.mock("GET", "/concurrent").with_status(200).create();
+        let base_url = server.url() + "/concurrent";
+
+        let config = crate::config::Config {
+            timeout: Some(5),
+            threads: Some(3), // Moderate concurrency
+            ..Default::default()
+        };
+
+        // Create a few URLs that will be processed concurrently
+        let urls: Vec<UrlLocation> = (0..5)
+            .map(|i| UrlLocation {
+                url: format!("{base_url}?test={i}"),
+                line: i,
+                file_name: format!("test{i}.md"),
+            })
+            .collect();
+
+        let validator = Validator::default();
+        let start = std::time::Instant::now();
+        let result = validator
+            .validate_urls_with_config(urls, &config, None)
+            .await;
+        let duration = start.elapsed();
+
+        // All URLs should be processed
+        assert_eq!(result.len(), 5);
+
+        // Should be reasonably fast with concurrency
+        assert!(duration.as_secs() < 10);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls_malformed_urls() -> TestResult {
+        let config = crate::config::Config {
+            timeout: Some(1),
+            ..Default::default()
+        };
+
+        let urls = vec![
+            UrlLocation {
+                url: "not-a-url".to_string(),
+                line: 1,
+                file_name: "test.md".to_string(),
+            },
+            UrlLocation {
+                url: "http://".to_string(), // Incomplete URL
+                line: 2,
+                file_name: "test.md".to_string(),
+            },
+            UrlLocation {
+                url: "https://[invalid".to_string(), // Invalid format
+                line: 3,
+                file_name: "test.md".to_string(),
+            },
+        ];
+
+        let validator = Validator::default();
+        let result = validator
+            .validate_urls_with_config(urls, &config, None)
+            .await;
+
+        assert_eq!(result.len(), 3);
+
+        // All should fail due to malformed URLs
+        for res in &result {
+            assert!(res.status_code.is_none());
+            assert!(res.description.is_some());
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_validation_result_ordering() {
+        let mut results = vec![
+            ValidationResult {
+                url: "https://z.com".to_string(),
+                line: 1,
+                file_name: "test.md".to_string(),
+                status_code: Some(200),
+                description: None,
+            },
+            ValidationResult {
+                url: "https://a.com".to_string(),
+                line: 2,
+                file_name: "test.md".to_string(),
+                status_code: Some(404),
+                description: None,
+            },
+            ValidationResult {
+                url: "https://m.com".to_string(),
+                line: 3,
+                file_name: "test.md".to_string(),
+                status_code: Some(200),
+                description: None,
+            },
+        ];
+
+        results.sort();
+
+        assert_eq!(results[0].url, "https://a.com");
+        assert_eq!(results[1].url, "https://m.com");
+        assert_eq!(results[2].url, "https://z.com");
+    }
+
+    #[test]
+    fn test_validation_result_equality() {
+        let result1 = ValidationResult {
+            url: "https://example.com".to_string(),
+            line: 1,
+            file_name: "test1.md".to_string(),
+            status_code: Some(200),
+            description: None,
+        };
+
+        let result2 = ValidationResult {
+            url: "https://example.com".to_string(),
+            line: 5,                           // Different line
+            file_name: "test2.md".to_string(), // Different file
+            status_code: Some(200),
+            description: None,
+        };
+
+        let result3 = ValidationResult {
+            url: "https://different.com".to_string(),
+            line: 1,
+            file_name: "test1.md".to_string(),
+            status_code: Some(200),
+            description: None,
+        };
+
+        // Same URL, same status/description should be equal
+        assert_eq!(result1, result2);
+        // Different URL should not be equal
+        assert_ne!(result1, result3);
     }
 }

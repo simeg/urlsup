@@ -3,11 +3,16 @@ use grep::searcher::Searcher;
 use grep::searcher::sinks::UTF8;
 use linkify::{LinkFinder, LinkKind};
 use once_cell::sync::Lazy;
+use rayon::prelude::*;
 
-use crate::UrlLocation;
+use crate::{
+    UrlLocation,
+    constants::files,
+    error::{Result, UrlsUpError},
+    types::UrlLocationError,
+};
 
-use std::io;
-use std::path::Path;
+use std::{io, path::Path};
 
 const MARKDOWN_URL_PATTERN: &str =
     r#"(http://|https://)[a-z0-9]+([-.]{1}[a-z0-9]+)*(.[a-z]{2,5})?(:[0-9]{1,5})?(/.*)?"#;
@@ -32,16 +37,32 @@ pub struct Finder {}
 
 impl UrlFinder for Finder {
     fn find_urls(&self, paths: Vec<&Path>) -> io::Result<Vec<UrlLocation>> {
-        // Pre-allocate with estimated capacity based on file count
-        let estimated_capacity = paths.len() * 10; // Estimate ~10 URLs per file
-        let mut result = Vec::with_capacity(estimated_capacity);
+        // Use parallel processing for file reading and URL extraction
+        let results: std::result::Result<Vec<Vec<UrlLocation>>, io::Error> = paths
+            .par_iter()
+            .map(|path| -> io::Result<Vec<UrlLocation>> {
+                let url_matches = Self::parse_lines_with_urls(path)?;
+                let estimated_capacity = Self::estimate_url_capacity(path, url_matches.len());
+                let mut file_urls = Vec::with_capacity(estimated_capacity);
 
-        for path in paths {
-            let url_matches = Finder::parse_lines_with_urls(path)?;
-            for url_match in url_matches {
-                let url_locations = Finder::parse_urls(url_match);
-                result.extend(url_locations);
-            }
+                for url_match in url_matches {
+                    // Handle parse_urls error by converting to IO error
+                    let url_locations = Self::parse_urls(url_match)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                    file_urls.extend(url_locations);
+                }
+
+                Ok(file_urls)
+            })
+            .collect();
+
+        // Flatten the results into a single vector
+        let file_results = results?;
+        let total_capacity: usize = file_results.iter().map(|v| v.len()).sum();
+        let mut result = Vec::with_capacity(total_capacity);
+
+        for file_urls in file_results {
+            result.extend(file_urls);
         }
 
         Ok(result)
@@ -51,8 +72,33 @@ impl UrlFinder for Finder {
 type UrlMatch = (String, String, u64);
 
 impl Finder {
+    /// Estimate URL capacity based on file extension and initial match count
+    fn estimate_url_capacity(path: &Path, match_count: usize) -> usize {
+        if match_count == 0 {
+            return 0;
+        }
+
+        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
+
+        let multiplier = match extension {
+            "md" | "markdown" => 2, // Markdown files often have multiple URLs per line
+            "html" | "htm" => 3,    // HTML files may have many URLs per match
+            "txt" | "rst" => 1,     // Plain text files usually have fewer URLs
+            "json" | "xml" => 2,    // Config files may have API endpoints
+            _ => files::ESTIMATED_URLS_PER_MATCH,
+        };
+
+        // Use a minimum capacity and scale with match count
+        (match_count.saturating_mul(multiplier)).max(4)
+    }
+
+    /// Parse lines from a file that contain URLs based on regex pattern matching.
+    ///
+    /// This is the first stage of URL finding - it quickly identifies lines
+    /// that are likely to contain URLs using regex.
     fn parse_lines_with_urls(path: &Path) -> io::Result<Vec<UrlMatch>> {
-        let mut matches = Vec::with_capacity(20); // Pre-allocate for estimated URLs per file
+        let mut matches = Vec::with_capacity(files::DEFAULT_URL_CAPACITY_PER_FILE); // Pre-allocate for estimated URLs per file
+
         Searcher::new().search_path(
             &*REGEX_MATCHER,
             path,
@@ -67,18 +113,47 @@ impl Finder {
         Ok(matches)
     }
 
-    fn parse_urls(url_match: UrlMatch) -> Vec<UrlLocation> {
-        let (url, file_name, line) = url_match;
+    /// Parse URLs from a line of text and return valid UrlLocation instances.
+    ///
+    /// This method extracts actual URLs from matched lines using the linkify crate
+    /// and creates properly validated UrlLocation instances.
+    fn parse_urls(url_match: UrlMatch) -> Result<Vec<UrlLocation>> {
+        let (line_content, file_name, line) = url_match;
 
         // Use the static LinkFinder for better performance
-        LINK_FINDER
-            .links(url.as_str())
-            .map(|url| UrlLocation {
-                line,
-                file_name: file_name.clone(), // Use clone instead of to_owned for clarity
-                url: url.as_str().to_string(),
-            })
-            .collect()
+        let mut url_locations = Vec::new();
+
+        for link in LINK_FINDER.links(&line_content) {
+            match UrlLocation::new(link.as_str().to_string(), line, file_name.clone()) {
+                Ok(location) => url_locations.push(location),
+                Err(UrlLocationError::MissingUrl) => {
+                    // Skip empty URLs - this shouldn't happen with linkify, but be defensive
+                    continue;
+                }
+                Err(UrlLocationError::InvalidLineNumber) => {
+                    // This indicates a bug in our code since we control the line number
+                    return Err(UrlsUpError::Validation(format!(
+                        "Invalid line number {line} for URL in file {file_name}"
+                    )));
+                }
+                Err(UrlLocationError::MissingFileName) => {
+                    // This indicates a bug in our code since we control the file name
+                    return Err(UrlsUpError::Validation(format!(
+                        "Invalid file name for URL {} at line {}",
+                        link.as_str(),
+                        line
+                    )));
+                }
+                Err(UrlLocationError::MissingLine) => {
+                    // This shouldn't happen since we always provide a line number
+                    return Err(UrlsUpError::Validation(
+                        "Missing line number - this is a bug".to_string(),
+                    ));
+                }
+            }
+        }
+
+        Ok(url_locations)
     }
 }
 
@@ -89,7 +164,7 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    type TestResult = Result<(), Box<dyn std::error::Error>>;
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     #[test]
     fn test_parse_urls() {
@@ -98,18 +173,18 @@ mod tests {
         let url_match = (md_link, "this-file-name".to_string(), 99);
 
         let expected = vec![
-            UrlLocation {
-                url: "http://foo.bar".to_string(),
-                line: 99,
-                file_name: "this-file-name".to_string(),
-            },
-            UrlLocation {
-                url: "http://foo2.bar".to_string(),
-                line: 99,
-                file_name: "this-file-name".to_string(),
-            },
+            UrlLocation::new_unchecked(
+                "http://foo.bar".to_string(),
+                99,
+                "this-file-name".to_string(),
+            ),
+            UrlLocation::new_unchecked(
+                "http://foo2.bar".to_string(),
+                99,
+                "this-file-name".to_string(),
+            ),
         ];
-        let actual = Finder::parse_urls(url_match);
+        let actual = Finder::parse_urls(url_match).unwrap();
 
         assert_eq!(actual, expected);
     }
@@ -119,12 +194,12 @@ mod tests {
         let md_link = "arbitrary ![image](http://foo.bar) arbitrary".to_string();
         let url_match = (md_link, "this-file-name".to_string(), 99);
 
-        let expected = vec![UrlLocation {
-            url: "http://foo.bar".to_string(),
-            line: 99,
-            file_name: "this-file-name".to_string(),
-        }];
-        let actual = Finder::parse_urls(url_match);
+        let expected = vec![UrlLocation::new_unchecked(
+            "http://foo.bar".to_string(),
+            99,
+            "this-file-name".to_string(),
+        )];
+        let actual = Finder::parse_urls(url_match).unwrap();
 
         assert_eq!(actual, expected);
     }
@@ -134,12 +209,12 @@ mod tests {
         let md_link = "arbitrary [something]: http://foo.bar arbitrary".to_string();
         let url_match = (md_link, "this-file-name".to_string(), 99);
 
-        let expected = vec![UrlLocation {
-            url: "http://foo.bar".to_string(),
-            line: 99,
-            file_name: "this-file-name".to_string(),
-        }];
-        let actual = Finder::parse_urls(url_match);
+        let expected = vec![UrlLocation::new_unchecked(
+            "http://foo.bar".to_string(),
+            99,
+            "this-file-name".to_string(),
+        )];
+        let actual = Finder::parse_urls(url_match).unwrap();
 
         assert_eq!(actual, expected);
     }
@@ -221,7 +296,7 @@ mod tests {
 
         assert_eq!(result.len(), 3);
 
-        let urls: Vec<&str> = result.iter().map(|ul| ul.url.as_str()).collect();
+        let urls: Vec<&str> = result.iter().map(|ul| ul.url()).collect();
         assert!(urls.contains(&"https://example.com"));
         assert!(urls.contains(&"https://test.org"));
         assert!(urls.contains(&"https://demo.net"));
@@ -266,7 +341,7 @@ mod tests {
         // Should find URLs from markdown files only
         assert_eq!(result.len(), 3); // project.com, github.com, docs.example.com
 
-        let urls: Vec<&str> = result.iter().map(|ul| ul.url.as_str()).collect();
+        let urls: Vec<&str> = result.iter().map(|ul| ul.url()).collect();
         assert!(urls.contains(&"https://project.com"));
         assert!(urls.contains(&"https://github.com/user/repo"));
         assert!(urls.contains(&"https://docs.example.com"));

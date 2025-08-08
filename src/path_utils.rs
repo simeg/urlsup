@@ -1,11 +1,13 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::error::{Result, UrlsUpError};
+
 pub fn expand_paths(
     input_paths: Vec<&Path>,
     recursive: bool,
     file_types: Option<&HashSet<String>>,
-) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+) -> Result<Vec<PathBuf>> {
     let mut result_paths = Vec::new();
 
     for path in input_paths {
@@ -48,11 +50,10 @@ pub fn expand_paths(
                 }
             }
         } else if path.is_dir() && !recursive {
-            return Err(format!(
+            return Err(UrlsUpError::PathExpansion(format!(
                 "'{}' is a directory. Use --recursive to process directories.",
                 path.display()
-            )
-            .into());
+            )));
         }
     }
 
@@ -67,9 +68,9 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    type TestResult = Result<(), Box<dyn std::error::Error>>;
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
-    fn create_test_structure() -> Result<TempDir, Box<dyn std::error::Error>> {
+    fn create_test_structure() -> std::result::Result<TempDir, Box<dyn std::error::Error>> {
         let temp_dir = tempfile::tempdir()?;
         let base = temp_dir.path();
 
