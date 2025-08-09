@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
 
 jobs:
   ci:
@@ -20,28 +21,11 @@ jobs:
         with:
           fetch-depth: 0  # Needed for codecov
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
+      - name: Setup Rust with caching and tools
+        uses: brndnmtthws/rust-action@v1
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.cargo/bin
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Check for errors
-        run: cargo check --all-targets --all-features
+          toolchain: stable
+          enable-sccache: true
 
       - name: Lint (format check)
         run: cargo fmt --all -- --check
@@ -51,12 +35,6 @@ jobs:
 
       - name: Test
         run: cargo test --all-features
-
-      - name: Install cargo-tarpaulin
-        run: |
-          if ! command -v cargo-tarpaulin &> /dev/null; then
-            cargo install cargo-tarpaulin
-          fi
 
       - name: Generate test coverage
         run: cargo tarpaulin --all-features --workspace --timeout 120 --out xml
