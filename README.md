@@ -7,11 +7,14 @@ be up.
 
 It's written in Rust (stable) and executes the requests async in multiple
 threads, making it very fast. **Uses browser-like HTTP client behavior with
-automatic protocol negotiation and reliable connection handling.** This in 
+automatic protocol negotiation and reliable connection handling.** This in
 combination with its ease of use makes it the perfect tool for your CI pipeline.
 
 This project is a slim version of
 [`awesome_bot`](https://github.com/dkhamsing/awesome_bot) but significantly faster.
+
+<img src="banner.png" alt="Dotfiles Banner" width="100%" style="display: block; margin: 0 auto;">
+
 
 ## 🎉 What's New in v2.0
 
