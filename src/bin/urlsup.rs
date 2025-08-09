@@ -99,13 +99,24 @@ pub async fn run_urlsup_logic(cli: &Cli) -> Result<i32, Box<dyn std::error::Erro
     // Finalize progress reporting
     finalize_progress_reporter(progress);
 
-    // Display final results and determine exit code
-    let (_, issues_found) = display_final_results(
-        &filtered_results,
-        &output_settings,
-        &config,
+    // Calculate URL statistics for JSON output
+    let unique_urls = urlsup::validator::Validator::deduplicate_urls_optimized(&filtered_urls);
+    let unique_urls_found = unique_urls.len();
+    let total_urls_found = filtered_urls.len();
+    let files_processed = expanded_paths.len();
+
+    // Create display metadata
+    let metadata = output::DisplayMetadata {
         total_validated,
-    );
+        issues_found: filtered_results.len(),
+        files_processed,
+        total_urls_found,
+        unique_urls_found,
+    };
+
+    // Display final results and determine exit code
+    let (_, issues_found) =
+        display_final_results(&filtered_results, &output_settings, &config, &metadata);
 
     Ok(determine_exit_code(issues_found, total_validated, &config))
 }
@@ -359,12 +370,12 @@ pub fn display_final_results(
     filtered_results: &[urlsup::ValidationResult],
     output_settings: &OutputSettings,
     config: &Config,
-    total_validated: usize,
+    metadata: &output::DisplayMetadata,
 ) -> (usize, usize) {
     let issues_found = filtered_results.len();
 
     // Log validation completion with correct counts
-    logging::log_validation_complete(total_validated, issues_found, 0);
+    logging::log_validation_complete(metadata.total_validated, issues_found, 0);
 
     // Output results using the output module
     output::display_results(
@@ -372,11 +383,10 @@ pub fn display_final_results(
         &output_settings.output_format,
         output_settings.quiet,
         config,
-        total_validated,
-        issues_found,
+        metadata,
     );
 
-    (total_validated, issues_found)
+    (metadata.total_validated, issues_found)
 }
 
 /// Determine exit code based on failure threshold
@@ -986,7 +996,14 @@ mod tests {
 
         let config = Config::default();
 
-        let (total, issues) = display_final_results(&results, &settings, &config, 1);
+        let metadata = output::DisplayMetadata {
+            total_validated: 1,
+            issues_found: 1,
+            files_processed: 1,
+            total_urls_found: 1,
+            unique_urls_found: 1,
+        };
+        let (total, issues) = display_final_results(&results, &settings, &config, &metadata);
         assert_eq!(total, 1);
         assert_eq!(issues, 1);
     }

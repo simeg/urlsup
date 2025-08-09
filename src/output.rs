@@ -6,6 +6,16 @@ use crate::config::Config;
 use crate::constants::output_formats;
 use crate::validator::ValidationResult;
 
+/// Metadata for displaying results
+#[derive(Debug, Clone)]
+pub struct DisplayMetadata {
+    pub total_validated: usize,
+    pub issues_found: usize,
+    pub files_processed: usize,
+    pub total_urls_found: usize,
+    pub unique_urls_found: usize,
+}
+
 /// Display configuration information in a user-friendly format
 pub fn display_config_info(config: &Config, threads: usize, expanded_paths: &[std::path::PathBuf]) {
     println!(
@@ -259,18 +269,17 @@ pub fn display_results(
     output_format: &str,
     quiet: bool,
     config: &Config,
-    total_validated: usize,
-    issues_found: usize,
+    metadata: &DisplayMetadata,
 ) {
     match output_format {
         output_formats::MINIMAL => display_minimal_output(filtered_results),
-        output_formats::JSON => display_json_output(filtered_results),
+        output_formats::JSON => display_json_output(filtered_results, metadata),
         _ => display_text_output(
             filtered_results,
             quiet,
             config,
-            total_validated,
-            issues_found,
+            metadata.total_validated,
+            metadata.issues_found,
         ),
     }
 }
@@ -289,11 +298,32 @@ fn display_minimal_output(filtered_results: &[ValidationResult]) {
 }
 
 /// Display results in JSON format
-fn display_json_output(filtered_results: &[ValidationResult]) {
-    if filtered_results.is_empty() {
-        println!("{{\"status\": \"success\", \"issues\": []}}");
+fn display_json_output(filtered_results: &[ValidationResult], metadata: &DisplayMetadata) {
+    let success_rate = if metadata.total_validated > 0 {
+        ((metadata.total_validated - metadata.issues_found) as f64
+            / metadata.total_validated as f64)
+            * 100.0
     } else {
-        println!("{{\"status\": \"failure\", \"issues\": [");
+        100.0
+    };
+
+    print!("{{\"files\": {{");
+    print!("\"total\": {}, ", metadata.files_processed);
+    print!("\"processed\": {}", metadata.files_processed);
+    print!("}}, ");
+
+    print!("\"urls\": {{");
+    print!("\"total_found\": {}, ", metadata.total_urls_found);
+    print!("\"unique\": {}, ", metadata.unique_urls_found);
+    print!("\"validated\": {}, ", metadata.total_validated);
+    print!("\"failed\": {}, ", metadata.issues_found);
+    print!("\"success_rate\": {success_rate:.1}");
+    print!("}}, ");
+
+    if filtered_results.is_empty() {
+        println!("\"status\": \"success\", \"issues\": []}}");
+    } else {
+        println!("\"status\": \"failure\", \"issues\": [");
         for (i, result) in filtered_results.iter().enumerate() {
             let comma = if i < filtered_results.len() - 1 {
                 ","
@@ -670,7 +700,14 @@ mod tests {
         }];
         let config = Config::default();
 
-        display_results(&results, output_formats::MINIMAL, false, &config, 1, 1);
+        let metadata = DisplayMetadata {
+            total_validated: 1,
+            issues_found: 1,
+            files_processed: 1,
+            total_urls_found: 1,
+            unique_urls_found: 1,
+        };
+        display_results(&results, output_formats::MINIMAL, false, &config, &metadata);
     }
 
     #[test]
@@ -684,7 +721,14 @@ mod tests {
         }];
         let config = Config::default();
 
-        display_results(&results, output_formats::JSON, false, &config, 1, 1);
+        let metadata = DisplayMetadata {
+            total_validated: 1,
+            issues_found: 1,
+            files_processed: 1,
+            total_urls_found: 1,
+            unique_urls_found: 1,
+        };
+        display_results(&results, output_formats::JSON, false, &config, &metadata);
     }
 
     #[test]
@@ -698,7 +742,14 @@ mod tests {
         }];
         let config = Config::default();
 
-        display_results(&results, output_formats::TEXT, false, &config, 1, 1);
+        let metadata = DisplayMetadata {
+            total_validated: 1,
+            issues_found: 1,
+            files_processed: 1,
+            total_urls_found: 1,
+            unique_urls_found: 1,
+        };
+        display_results(&results, output_formats::TEXT, false, &config, &metadata);
     }
 
     #[test]
@@ -749,7 +800,14 @@ mod tests {
     #[test]
     fn test_display_json_output_empty() {
         let results = vec![];
-        display_json_output(&results);
+        let metadata = DisplayMetadata {
+            total_validated: 0,
+            issues_found: 0,
+            files_processed: 1,
+            total_urls_found: 0,
+            unique_urls_found: 0,
+        };
+        display_json_output(&results, &metadata);
     }
 
     #[test]
@@ -762,7 +820,14 @@ mod tests {
             description: Some("Not Found".to_string()),
         }];
 
-        display_json_output(&results);
+        let metadata = DisplayMetadata {
+            total_validated: 1,
+            issues_found: 1,
+            files_processed: 1,
+            total_urls_found: 1,
+            unique_urls_found: 1,
+        };
+        display_json_output(&results, &metadata);
     }
 
     #[test]
@@ -784,7 +849,14 @@ mod tests {
             },
         ];
 
-        display_json_output(&results);
+        let metadata = DisplayMetadata {
+            total_validated: 2,
+            issues_found: 2,
+            files_processed: 1,
+            total_urls_found: 2,
+            unique_urls_found: 2,
+        };
+        display_json_output(&results, &metadata);
     }
 
     #[test]
@@ -797,7 +869,95 @@ mod tests {
             description: None,
         }];
 
-        display_json_output(&results);
+        let metadata = DisplayMetadata {
+            total_validated: 1,
+            issues_found: 1,
+            files_processed: 1,
+            total_urls_found: 1,
+            unique_urls_found: 1,
+        };
+        display_json_output(&results, &metadata);
+    }
+
+    #[test]
+    fn test_display_json_output_metadata_with_success() {
+        let results = vec![];
+        let metadata = DisplayMetadata {
+            total_validated: 5,
+            issues_found: 0,
+            files_processed: 3,
+            total_urls_found: 8,
+            unique_urls_found: 5,
+        };
+        display_json_output(&results, &metadata);
+    }
+
+    #[test]
+    fn test_display_json_output_metadata_with_partial_failures() {
+        let results = vec![ValidationResult {
+            url: "https://broken.example.com".to_string(),
+            file_name: "test.md".to_string(),
+            line: 1,
+            status_code: Some(404),
+            description: Some("Not Found".to_string()),
+        }];
+
+        let metadata = DisplayMetadata {
+            total_validated: 10,
+            issues_found: 1,
+            files_processed: 2,
+            total_urls_found: 12,
+            unique_urls_found: 10,
+        };
+        display_json_output(&results, &metadata);
+    }
+
+    #[test]
+    fn test_display_json_output_large_dataset() {
+        let results = vec![];
+        let metadata = DisplayMetadata {
+            total_validated: 1000,
+            issues_found: 0,
+            files_processed: 50,
+            total_urls_found: 1500,
+            unique_urls_found: 1000,
+        };
+        display_json_output(&results, &metadata);
+    }
+
+    #[test]
+    fn test_display_metadata_properties() {
+        let metadata = DisplayMetadata {
+            total_validated: 100,
+            issues_found: 5,
+            files_processed: 10,
+            total_urls_found: 120,
+            unique_urls_found: 100,
+        };
+
+        assert_eq!(metadata.total_validated, 100);
+        assert_eq!(metadata.issues_found, 5);
+        assert_eq!(metadata.files_processed, 10);
+        assert_eq!(metadata.total_urls_found, 120);
+        assert_eq!(metadata.unique_urls_found, 100);
+    }
+
+    #[test]
+    fn test_display_metadata_clone() {
+        let metadata = DisplayMetadata {
+            total_validated: 50,
+            issues_found: 2,
+            files_processed: 5,
+            total_urls_found: 60,
+            unique_urls_found: 50,
+        };
+
+        let cloned = metadata.clone();
+        assert_eq!(metadata.total_validated, cloned.total_validated);
+        assert_eq!(metadata.issues_found, cloned.issues_found);
+        assert_eq!(metadata.files_processed, cloned.files_processed);
+        assert_eq!(metadata.total_urls_found, cloned.total_urls_found);
+        assert_eq!(metadata.unique_urls_found, cloned.unique_urls_found);
     }
 
     #[test]
