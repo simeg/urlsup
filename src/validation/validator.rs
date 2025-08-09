@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use tokio::time::{Duration, Instant, sleep};
 
-use crate::{UrlLocation, config::Config, constants::http_status, progress::ProgressReporter};
+use crate::{
+    UrlLocation, config::Config, core::constants::http_status, ui::progress::ProgressReporter,
+};
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -551,11 +553,12 @@ mod tests {
         let endpoint_404 = server.url() + "/404";
         let endpoint_non_existing = "http://192.0.2.1:1/nonexisting".to_string();
 
-        let mut file = tempfile::NamedTempFile::new().map_err(crate::error::UrlsUpError::Io)?;
+        let mut file =
+            tempfile::NamedTempFile::new().map_err(crate::core::error::UrlsUpError::Io)?;
         file.write_all(
             format!("arbitrary {endpoint_200} arbitrary [arbitrary]({endpoint_404}) arbitrary {endpoint_non_existing}")
             .as_bytes(),
-        ).map_err(crate::error::UrlsUpError::Io)?;
+        ).map_err(crate::core::error::UrlsUpError::Io)?;
 
         let mut actual = validator
             .validate_urls_with_config(

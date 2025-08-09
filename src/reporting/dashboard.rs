@@ -1,7 +1,7 @@
 use crate::config::Config;
-use crate::output::DisplayMetadata;
-use crate::performance::PerformanceReport;
-use crate::validator::ValidationResult;
+use crate::reporting::performance::PerformanceReport;
+use crate::ui::output::DisplayMetadata;
+use crate::validation::validator::ValidationResult;
 use std::collections::HashMap;
 use std::fs;
 use std::io;

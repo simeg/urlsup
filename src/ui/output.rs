@@ -1,10 +1,10 @@
 //! Output formatting and display logic for urlsup
 
 use crate::UrlLocation;
-use crate::color::{Colors, colorize};
 use crate::config::Config;
-use crate::constants::output_formats;
-use crate::validator::ValidationResult;
+use crate::core::constants::output_formats;
+use crate::ui::color::{Colors, colorize};
+use crate::validation::validator::ValidationResult;
 
 /// Metadata for displaying results
 #[derive(Debug, Clone)]
@@ -559,9 +559,9 @@ fn display_failure_threshold_info(
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::constants::output_formats;
-    use crate::types::UrlLocation;
-    use crate::validator::ValidationResult;
+    use crate::core::constants::output_formats;
+    use crate::core::types::UrlLocation;
+    use crate::validation::validator::ValidationResult;
     use std::io::{self, Write};
     use std::path::PathBuf;
 

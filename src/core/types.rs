@@ -77,7 +77,7 @@ impl UrlLocation {
     ///
     /// # Examples
     /// ```
-    /// use urlsup::types::UrlLocation;
+    /// use urlsup::UrlLocation;
     ///
     /// let location = UrlLocation::new(
     ///     "https://example.com".to_string(),

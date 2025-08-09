@@ -8,9 +8,9 @@ use rayon::prelude::*;
 
 use crate::{
     UrlLocation,
-    constants::files,
-    error::{Result, UrlsUpError},
-    types::UrlLocationError,
+    core::constants::files,
+    core::error::{Result, UrlsUpError},
+    core::types::UrlLocationError,
 };
 
 use std::{io, path::Path};
@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn test_find_urls__with_recursive_structure() -> TestResult {
-        use crate::path_utils::expand_paths;
+        use crate::discovery::path_utils::expand_paths;
         use std::collections::HashSet;
         use std::fs;
 
@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn test_find_urls__empty_directory() -> TestResult {
-        use crate::path_utils::expand_paths;
+        use crate::discovery::path_utils::expand_paths;
         use std::collections::HashSet;
 
         let temp_dir = tempfile::tempdir()?;

@@ -1,3 +1,8 @@
+//! Configuration management
+//!
+//! This module handles loading and managing configuration from
+//! TOML files and CLI arguments.
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -5,8 +10,8 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::constants::{output_formats, timeouts};
-use crate::error::Result;
+use crate::core::constants::{output_formats, timeouts};
+use crate::core::error::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -99,7 +104,7 @@ impl Config {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         let content = fs::read_to_string(path).map_err(|e| {
-            crate::error::UrlsUpError::Config(format!(
+            crate::core::error::UrlsUpError::Config(format!(
                 "Could not read config file '{}': {}",
                 path.display(),
                 e
@@ -107,7 +112,7 @@ impl Config {
         })?;
 
         let config: Config = toml::from_str(&content).map_err(|e| {
-            crate::error::UrlsUpError::Config(format!(
+            crate::core::error::UrlsUpError::Config(format!(
                 "Invalid TOML in config file '{}': {}",
                 path.display(),
                 e
@@ -245,13 +250,13 @@ impl Config {
         // Validate timeout
         if let Some(timeout) = self.timeout {
             if timeout == 0 {
-                return Err(crate::error::UrlsUpError::Config(
+                return Err(crate::core::error::UrlsUpError::Config(
                     "Timeout cannot be 0. Expected a positive integer representing seconds."
                         .to_string(),
                 ));
             }
             if timeout > 86400 {
-                return Err(crate::error::UrlsUpError::Config(format!(
+                return Err(crate::core::error::UrlsUpError::Config(format!(
                     "Timeout of {timeout} seconds is extremely large (>24 hours). Consider using a smaller value."
                 )));
             }
@@ -260,12 +265,12 @@ impl Config {
         // Validate concurrency/threads
         if let Some(threads) = self.threads {
             if threads == 0 {
-                return Err(crate::error::UrlsUpError::Config(
+                return Err(crate::core::error::UrlsUpError::Config(
                     "Thread count cannot be 0. Expected a positive integer.".to_string(),
                 ));
             }
             if threads > 1000 {
-                return Err(crate::error::UrlsUpError::Config(format!(
+                return Err(crate::core::error::UrlsUpError::Config(format!(
                     "Thread count of {threads} is extremely high and may cause system instability. Consider using a smaller value."
                 )));
             }
@@ -275,7 +280,7 @@ impl Config {
         if let Some(retry) = self.retry_attempts
             && retry > 20
         {
-            return Err(crate::error::UrlsUpError::Config(format!(
+            return Err(crate::core::error::UrlsUpError::Config(format!(
                 "Retry attempts of {retry} is very high and may cause long delays. Consider using a smaller value."
             )));
         }
@@ -284,7 +289,7 @@ impl Config {
         if let Some(ref codes) = self.allowed_status_codes {
             for &code in codes {
                 if !(100..=599).contains(&code) {
-                    return Err(crate::error::UrlsUpError::Config(format!(
+                    return Err(crate::core::error::UrlsUpError::Config(format!(
                         "Status code {code} is not a valid HTTP status code. Expected a number between 100-599."
                     )));
                 }
@@ -296,7 +301,7 @@ impl Config {
             match format.as_str() {
                 f if output_formats::ALL.contains(&f) => {}
                 _ => {
-                    return Err(crate::error::UrlsUpError::Config(format!(
+                    return Err(crate::core::error::UrlsUpError::Config(format!(
                         "Invalid output format '{format}'. Expected one of: {}.",
                         output_formats::ALL.join(", ")
                     )));
@@ -308,7 +313,7 @@ impl Config {
         if let Some(threshold) = self.failure_threshold {
             const EPSILON: f64 = 1e-10;
             if !(-EPSILON..=100.0 + EPSILON).contains(&threshold) {
-                return Err(crate::error::UrlsUpError::Config(format!(
+                return Err(crate::core::error::UrlsUpError::Config(format!(
                     "Failure threshold {threshold}% is invalid. Expected a value between 0-100."
                 )));
             }
@@ -364,7 +369,7 @@ pub struct CliConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::output_formats;
+    use crate::core::constants::output_formats;
     use std::io::Write;
 
     #[test]

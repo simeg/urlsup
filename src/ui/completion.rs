@@ -130,7 +130,7 @@ fn generate_completion_script(shell: clap_complete::Shell) -> Result<String, Str
     use std::io::Cursor;
 
     // Create the CLI command structure for completion generation
-    let mut cmd = crate::cli::Cli::command();
+    let mut cmd = crate::ui::cli::Cli::command();
     let mut buf = Cursor::new(Vec::new());
 
     match shell {
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_print_completions_bash() {
-        let mut cmd = crate::cli::Cli::command();
+        let mut cmd = crate::ui::cli::Cli::command();
         // Test that it doesn't panic and generates non-empty output
         let mut buf = Vec::new();
         clap_complete::generate(clap_complete::shells::Bash, &mut cmd, "urlsup", &mut buf);
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn test_print_completions_zsh() {
-        let mut cmd = crate::cli::Cli::command();
+        let mut cmd = crate::ui::cli::Cli::command();
         // Test that it doesn't panic and generates non-empty output
         let mut buf = Vec::new();
         clap_complete::generate(clap_complete::shells::Zsh, &mut cmd, "urlsup", &mut buf);
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn test_print_completions_fish() {
-        let mut cmd = crate::cli::Cli::command();
+        let mut cmd = crate::ui::cli::Cli::command();
         // Test that it doesn't panic and generates non-empty output
         let mut buf = Vec::new();
         clap_complete::generate(clap_complete::shells::Fish, &mut cmd, "urlsup", &mut buf);

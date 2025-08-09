@@ -1,7 +1,7 @@
 // Command-line interface definitions and parsing for urlsup
 
 use crate::config::CliConfig;
-use crate::constants::{output_formats, timeouts};
+use crate::core::constants::{output_formats, timeouts};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -523,7 +523,7 @@ pub fn validate_cli_args(cli: &Cli) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::output_formats;
+    use crate::core::constants::output_formats;
 
     fn create_default_cli() -> Cli {
         Cli {

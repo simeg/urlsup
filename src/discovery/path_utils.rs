@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::error::{Result, UrlsUpError};
+use crate::core::error::{Result, UrlsUpError};
 
 pub fn expand_paths(
     input_paths: Vec<&Path>,

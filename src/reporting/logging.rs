@@ -12,12 +12,13 @@ pub fn init_logger(verbose: bool, quiet: bool) {
         log::LevelFilter::Off // Only show structured logs in verbose mode
     };
 
-    env_logger::Builder::from_default_env()
+    // Use try_init() to avoid panicking if logger is already initialized (e.g., in tests)
+    let _ = env_logger::Builder::from_default_env()
         .filter_level(level)
         .format_timestamp(None)
         .format_module_path(false)
         .format_target(false)
-        .init();
+        .try_init();
 
     debug!("Logger initialized with level: {level:?}");
 }
@@ -108,31 +109,30 @@ mod tests {
 
     #[test]
     fn test_logger_initialization_verbose() {
-        // Test that verbose mode initialization doesn't panic
-        // Note: Logger can only be initialized once per process, so we use panic::catch_unwind
-        std::panic::catch_unwind(|| init_logger(true, false)).ok();
-        // Test passes if we reach this point without panicking
+        // Test that verbose mode initialization works correctly
+        init_logger(true, false);
+        // Test passes if we reach this point without errors
     }
 
     #[test]
     fn test_logger_initialization_quiet() {
-        // Test that quiet mode initialization doesn't panic
-        std::panic::catch_unwind(|| init_logger(false, true)).ok();
-        // Test passes if we reach this point without panicking
+        // Test that quiet mode initialization works correctly
+        init_logger(false, true);
+        // Test passes if we reach this point without errors
     }
 
     #[test]
     fn test_logger_initialization_normal() {
-        // Test that normal mode initialization doesn't panic
-        std::panic::catch_unwind(|| init_logger(false, false)).ok();
-        // Test passes if we reach this point without panicking
+        // Test that normal mode initialization works correctly
+        init_logger(false, false);
+        // Test passes if we reach this point without errors
     }
 
     #[test]
     fn test_logger_initialization_conflicting() {
-        // Test that conflicting flags don't cause panics (quiet takes precedence)
-        std::panic::catch_unwind(|| init_logger(true, true)).ok();
-        // Test passes if we reach this point without panicking
+        // Test that conflicting flags work correctly (quiet takes precedence)
+        init_logger(true, true);
+        // Test passes if we reach this point without errors
     }
 
     #[test]

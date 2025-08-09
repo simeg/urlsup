@@ -1,16 +1,16 @@
 use clap::{CommandFactory, Parser};
-use urlsup::cli::{Cli, Commands, cli_to_config};
-use urlsup::completion::{install_completion, print_completions};
 use urlsup::config::Config;
-use urlsup::constants::{error_messages, output_formats};
-use urlsup::dashboard::{DashboardData, HtmlDashboard};
-use urlsup::finder::{Finder, UrlFinder};
-use urlsup::logging;
-use urlsup::output;
-use urlsup::path_utils::expand_paths;
-use urlsup::performance::PerformanceProfiler;
-use urlsup::progress::ProgressReporter;
-use urlsup::validator::{ValidateUrls, Validator};
+use urlsup::core::constants::{error_messages, output_formats};
+use urlsup::discovery::path_utils::expand_paths;
+use urlsup::discovery::{Finder, UrlFinder};
+use urlsup::reporting::PerformanceProfiler;
+use urlsup::reporting::logging;
+use urlsup::reporting::{DashboardData, HtmlDashboard};
+use urlsup::ui::ProgressReporter;
+use urlsup::ui::completion::{install_completion, print_completions};
+use urlsup::ui::output;
+use urlsup::ui::{Cli, Commands, cli_to_config};
+use urlsup::validation::{ValidateUrls, Validator};
 
 use std::path::Path;
 
@@ -128,7 +128,8 @@ pub async fn run_urlsup_logic(cli: &Cli) -> Result<i32, Box<dyn std::error::Erro
     finalize_progress_reporter(progress);
 
     // Calculate URL statistics for JSON output
-    let unique_urls = urlsup::validator::Validator::deduplicate_urls_optimized(&filtered_urls);
+    let unique_urls =
+        urlsup::validation::validator::Validator::deduplicate_urls_optimized(&filtered_urls);
     let unique_urls_found = unique_urls.len();
     let total_urls_found = filtered_urls.len();
     let files_processed = expanded_paths.len();
@@ -326,7 +327,8 @@ pub fn find_and_filter_urls(
 /// Display URL discovery information
 pub fn display_url_discovery_info(filtered_urls: &[urlsup::UrlLocation]) {
     // Deduplicate for unique count display
-    let unique_urls = urlsup::validator::Validator::deduplicate_urls_optimized(filtered_urls);
+    let unique_urls =
+        urlsup::validation::validator::Validator::deduplicate_urls_optimized(filtered_urls);
     let unique_count = unique_urls.len();
     let total_count = filtered_urls.len();
 
