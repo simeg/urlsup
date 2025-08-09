@@ -1,5 +1,145 @@
 # Changelog
 
+## 2.3.0 - 2025-08-09
+
+### 🚀 Performance Analysis & User Experience Release
+
+This release introduces comprehensive performance monitoring and visual reporting while fixing critical user experience issues and simplifying the tool's feature set.
+
+### ✨ New Features
+
+#### 📊 HTML Dashboard Generation
+- **Visual Reporting**: New `--html-dashboard <path>` flag generates rich HTML reports with interactive charts
+- **Professional Design**: Responsive dashboard with modern UI and chart.js integration
+- **Comprehensive Metrics**: Success rate cards, validation result distribution, and issue tracking
+- **Performance Integration**: Displays timing, memory usage, and optimization recommendations
+- **Mobile-Friendly**: Responsive design works on desktop, tablet, and mobile devices
+
+#### 🔬 Enhanced Performance Analysis
+- **Memory Monitoring**: Real-time memory usage tracking with peak usage reporting
+- **Optimization Suggestions**: Smart recommendations based on actual usage patterns
+- **Operation Breakdown**: Detailed timing for file processing, URL discovery, and validation
+- **System Resource Tracking**: CPU usage and performance characteristics monitoring
+
+#### 🎨 Improved User Interface
+- **Clean Performance Output**: Performance information now displays as beautiful, colored user-facing output
+- **Consistent Design**: Performance display matches the tool's emoji-rich, colorful aesthetic
+- **Visual Hierarchy**: Proper formatting with dimmed labels and bright values for better readability
+
+### 🐛 Critical Bug Fixes
+
+#### 🔧 `--show-performance` Flag Fixed
+- **Fixed**: `--show-performance` now works independently without requiring `--html-dashboard` or `--verbose`
+- **Root Cause**: Logger was configured to only show INFO level logs in verbose mode, hiding performance output
+- **Solution**: Replaced structured logging with direct user-facing output using consistent styling
+
+#### 🎯 User Experience Improvements
+- **No More Log Mess**: Eliminated ugly `[INFO]` prefixes mixed with colorful user interface
+- **Consistent Styling**: Performance output now uses same ANSI color codes and formatting as rest of tool
+- **Professional Presentation**: Performance metrics display with proper visual hierarchy and organization
+
+### 🧹 Simplification & Cleanup
+
+#### 🎯 Streamlined Experience
+- **Single Binary**: One build works for all use cases - no feature combinations to remember
+- **Consistent Behavior**: All functionality available in every installation
+- **Simplified Documentation**: No confusing feature flag explanations
+
+### 🏗️ Technical Improvements
+
+#### ⚡ Performance Features (Always Available)
+- **SIMD Optimizations**: Enhanced vectorized string processing with memchr
+- **Memory Efficiency**: File-type-aware capacity estimation and smart pre-allocation
+- **Dynamic Batching**: Adaptive batch sizes for optimal performance across different workloads
+- **Built-in Monitoring**: Performance analysis available without optional features
+
+#### 🔒 Security & Dependencies
+- **Security Fix**: Updated reqwest dependency chain to address RUSTSEC-2024-0421 (idna crate vulnerability)
+- **Modern Dependencies**: Updated to latest stable versions with security patches
+- **Reduced Attack Surface**: Fewer dependencies mean fewer potential security issues
+
+### 📈 Performance Monitoring Examples
+
+#### Enhanced Performance Display (Always Available)
+```bash
+$ urlsup --show-performance README.md
+
+📊 Performance Summary
+   Total Duration: 457.238875ms
+   Peak Memory: 12.17 MB
+   Avg CPU Usage: 0.3%
+
+   Operation Breakdown:
+   • file_processing: 159.25µs (1 items, 0 items/sec)
+   • url_discovery: 10.873792ms (1 items, 91 items/sec)
+   • url_validation: 445.5695ms (1 items, 2 items/sec)
+
+💡 Performance Recommendations:
+   • Low CPU utilization. Consider increasing --concurrency for better performance
+   • Slow URL validation. Consider increasing --timeout or using --head requests
+```
+
+#### HTML Dashboard Generation (Always Available)
+```bash
+# Generate comprehensive HTML report with performance analysis
+$ urlsup --html-dashboard report.html --show-performance docs/
+
+# Features interactive charts, performance metrics, and professional styling
+# Perfect for stakeholder reporting and CI/CD integration
+```
+
+### 🛠️ Development & Build
+
+#### Cleaner Dependencies
+- **Core Features**: All functionality available without optional dependencies
+- **Enhanced**: Performance monitoring with sysinfo for system resource tracking
+- **Security**: Updated dependency chain to fix RUSTSEC-2024-0421
+- **Streamlined**: Removed complexity of optional features
+
+### 🔄 Migration & Compatibility
+
+#### No Breaking Changes
+- **Full Compatibility**: All existing CLI flags and configuration continue to work
+- **Enhanced Features**: Existing functionality improved with better performance and UX
+- **Simpler Experience**: No more feature flag confusion
+
+#### Configuration Updates
+```toml
+# Performance settings in .urlsup.toml (always available)
+show_performance = false        # Enable performance analysis by default
+html_dashboard_path = "report.html"  # Auto-generate dashboard
+```
+
+### 📊 Performance Improvements
+
+This release maintains all performance gains from v2.2.0 while simplifying usage:
+- **Same Speed**: No performance regression from monitoring (overhead < 1%)
+- **Better Insights**: Detailed visibility into where time and memory are spent
+- **Optimization Guidance**: Smart recommendations for improving performance
+- **Professional Reporting**: HTML dashboards for stakeholder communication
+- **Simplified Access**: All features available without build flags
+
+### 🚀 Use Cases
+
+#### CI/CD Integration
+- **Simple Installation**: One `cargo install` command for all features
+- **Performance Monitoring**: Track validation performance over time in pipelines
+- **HTML Reports**: Generate artifacts for build reports and documentation
+- **No Configuration**: All capabilities available out of the box
+
+#### Large-Scale Documentation
+- **Resource Planning**: Understand memory and CPU requirements for scaling
+- **Performance Tuning**: Identify bottlenecks in large documentation sets
+- **Professional Reporting**: Generate stakeholder-ready HTML dashboards
+- **Easy Deployment**: No feature flags to manage in production
+
+### 🏗️ Internal Refactoring
+- **Package Restructuring**: Reorganized codebase into domain-driven packages (`core`, `config`, `discovery`, `validation`, `ui`, `reporting`)
+- **Code Quality**: Applied idiomatic Rust patterns and DRY principles throughout codebase
+- **Maintainability**: Improved module organization and separation of concerns
+
+This release significantly enhances the user experience by eliminating complexity while providing powerful performance analysis and professional reporting capabilities to everyone.
+
 ## 2.2.0 - 2025-08-09
 
 ### 🔧 Code Quality & Maintainability Release
