@@ -340,4 +340,114 @@ mod tests {
             std::env::remove_var("TERM");
         }
     }
+
+    #[test]
+    fn test_colorize_edge_cases() {
+        unsafe {
+            std::env::set_var("NO_COLOR", "1");
+        }
+
+        // Test empty string
+        assert_eq!(colorize("", Colors::RED), "");
+
+        // Test string with special characters
+        assert_eq!(
+            colorize("test\nwith\ttabs", Colors::BLUE),
+            "test\nwith\ttabs"
+        );
+
+        // Test unicode characters
+        assert_eq!(
+            colorize("test 🚀 unicode", Colors::GREEN),
+            "test 🚀 unicode"
+        );
+
+        unsafe {
+            std::env::remove_var("NO_COLOR");
+        }
+    }
+
+    #[test]
+    fn test_supports_formatting_with_term_variations() {
+        let original_no_color = std::env::var("NO_COLOR").ok();
+        let original_term = std::env::var("TERM").ok();
+        let original_test_time = std::env::var("RUST_TEST_TIME_UNIT").ok();
+
+        unsafe {
+            std::env::remove_var("NO_COLOR");
+            std::env::remove_var("RUST_TEST_TIME_UNIT");
+        }
+
+        // Test various TERM values that should support formatting
+        let supporting_terms = ["xterm", "xterm-256color", "screen", "tmux", "linux"];
+        for term in &supporting_terms {
+            unsafe {
+                std::env::set_var("TERM", term);
+            }
+            // Should still be false due to cfg!(test)
+            assert!(!supports_formatting(), "Failed for TERM={}", term);
+        }
+
+        // Restore original environment
+        unsafe {
+            if let Some(val) = original_no_color {
+                std::env::set_var("NO_COLOR", val);
+            }
+            if let Some(val) = original_term {
+                std::env::set_var("TERM", val);
+            } else {
+                std::env::remove_var("TERM");
+            }
+            if let Some(val) = original_test_time {
+                std::env::set_var("RUST_TEST_TIME_UNIT", val);
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_color_constants_coverage() {
+        // This test ensures all color constants are included in test coverage
+        // by accessing each one individually
+        let constants = [
+            Colors::RESET,
+            Colors::BOLD,
+            Colors::DIM,
+            Colors::RED,
+            Colors::GREEN,
+            Colors::YELLOW,
+            Colors::BLUE,
+            Colors::MAGENTA,
+            Colors::CYAN,
+            Colors::WHITE,
+            Colors::BRIGHT_RED,
+            Colors::BRIGHT_GREEN,
+            Colors::BRIGHT_YELLOW,
+            Colors::BRIGHT_BLUE,
+            Colors::BRIGHT_MAGENTA,
+            Colors::BRIGHT_CYAN,
+            Colors::BRIGHT_WHITE,
+        ];
+
+        // Verify each constant is accessible and not empty
+        for constant in &constants {
+            assert!(!constant.is_empty(), "Color constant should not be empty");
+            assert!(
+                constant.starts_with('\x1b'),
+                "Color constant should start with escape sequence"
+            );
+        }
+
+        // Test that each constant produces a unique string
+        let mut unique_values = std::collections::HashSet::new();
+        for constant in &constants {
+            assert!(
+                unique_values.insert(*constant),
+                "Color constant should be unique: {}",
+                constant
+            );
+        }
+
+        // Verify we have the expected number of constants
+        assert_eq!(constants.len(), 17, "Expected 17 color constants");
+    }
 }

@@ -274,4 +274,165 @@ mod tests {
             assert!(error.source().is_none());
         }
     }
+
+    #[test]
+    fn test_all_error_variants_display_and_source_comprehensive() {
+        // Test all error variants for both Display (fmt) and source() methods
+
+        // Create actual underlying errors for variants that have source
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "test io");
+        #[allow(clippy::invalid_regex)]
+        let regex_error = regex::Regex::new("[invalid").unwrap_err();
+        let toml_error = toml::from_str::<toml::Value>("invalid [ toml").unwrap_err();
+
+        // Create a reqwest error
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let reqwest_error = rt.block_on(async {
+            reqwest::get("http://invalid-domain-that-does-not-exist-12345.com")
+                .await
+                .unwrap_err()
+        });
+
+        // Create an ignore error by trying to walk a non-existent directory
+        let ignore_error = ignore::WalkBuilder::new("/non/existent/path/12345")
+            .build()
+            .next()
+            .unwrap()
+            .unwrap_err();
+
+        // Create all error variants
+        let all_errors = vec![
+            ("Io", UrlsUpError::Io(io_error), true),
+            (
+                "Config",
+                UrlsUpError::Config("test config".to_string()),
+                false,
+            ),
+            (
+                "Validation",
+                UrlsUpError::Validation("test validation".to_string()),
+                false,
+            ),
+            ("Http", UrlsUpError::Http(reqwest_error), true),
+            (
+                "PathExpansion",
+                UrlsUpError::PathExpansion("test path".to_string()),
+                false,
+            ),
+            ("Regex", UrlsUpError::Regex(regex_error), true),
+            ("TomlParsing", UrlsUpError::TomlParsing(toml_error), true),
+            (
+                "FileNotFound",
+                UrlsUpError::FileNotFound("test file".to_string()),
+                false,
+            ),
+            (
+                "InvalidArgument",
+                UrlsUpError::InvalidArgument("test arg".to_string()),
+                false,
+            ),
+            ("FileWalking", UrlsUpError::FileWalking(ignore_error), true),
+        ];
+
+        // Test each variant
+        for (variant_name, error, should_have_source) in all_errors {
+            // Test Display implementation (fmt)
+            let display_str = format!("{}", error);
+            assert!(
+                !display_str.is_empty(),
+                "Display should not be empty for {}",
+                variant_name
+            );
+            // Check that the display string contains a colon (all error messages have "type: message" format)
+            assert!(
+                display_str.contains(":"),
+                "Display should contain colon for {}: {}",
+                variant_name,
+                display_str
+            );
+
+            // Test source() method
+            let has_source = error.source().is_some();
+            assert_eq!(
+                has_source, should_have_source,
+                "Source mismatch for {}: expected {}, got {}",
+                variant_name, should_have_source, has_source
+            );
+
+            // For errors with source, verify the source is accessible
+            if should_have_source {
+                let source = error.source().unwrap();
+                let source_str = format!("{}", source);
+                assert!(
+                    !source_str.is_empty(),
+                    "Source should not be empty for {}",
+                    variant_name
+                );
+            }
+
+            // Test Debug implementation
+            let debug_str = format!("{:?}", error);
+            assert!(
+                !debug_str.is_empty(),
+                "Debug should not be empty for {}",
+                variant_name
+            );
+            assert!(
+                debug_str.contains(variant_name),
+                "Debug should contain variant name '{}': {}",
+                variant_name,
+                debug_str
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_from_implementations_comprehensive() {
+        // Test that all From implementations work correctly and produce the right variant
+
+        // Test From<std::io::Error>
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "perm denied");
+        let converted = UrlsUpError::from(io_err);
+        assert!(matches!(converted, UrlsUpError::Io(_)));
+        assert!(converted.source().is_some());
+        assert!(format!("{}", converted).contains("IO error:"));
+
+        // Test From<reqwest::Error>
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let reqwest_err = rt.block_on(async {
+            reqwest::get("http://definitely-invalid-domain-12345.com")
+                .await
+                .unwrap_err()
+        });
+        let converted = UrlsUpError::from(reqwest_err);
+        assert!(matches!(converted, UrlsUpError::Http(_)));
+        assert!(converted.source().is_some());
+        assert!(format!("{}", converted).contains("HTTP error:"));
+
+        // Test From<regex::Error>
+        #[allow(clippy::invalid_regex)]
+        let regex_err = regex::Regex::new("*invalid").unwrap_err();
+        let converted = UrlsUpError::from(regex_err);
+        assert!(matches!(converted, UrlsUpError::Regex(_)));
+        assert!(converted.source().is_some());
+        assert!(format!("{}", converted).contains("Regex error:"));
+
+        // Test From<toml::de::Error>
+        let toml_err = toml::from_str::<toml::Value>("invalid ] toml").unwrap_err();
+        let converted = UrlsUpError::from(toml_err);
+        assert!(matches!(converted, UrlsUpError::TomlParsing(_)));
+        assert!(converted.source().is_some());
+        assert!(format!("{}", converted).contains("TOML parsing error:"));
+
+        // Test From<ignore::Error>
+        let ignore_err = ignore::WalkBuilder::new("/definitely/nonexistent/path/12345")
+            .build()
+            .next()
+            .unwrap()
+            .unwrap_err();
+        let converted = UrlsUpError::from(ignore_err);
+        assert!(matches!(converted, UrlsUpError::FileWalking(_)));
+        assert!(converted.source().is_some());
+        assert!(format!("{}", converted).contains("File walking error:"));
+    }
 }

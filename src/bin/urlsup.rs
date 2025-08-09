@@ -1071,4 +1071,37 @@ mod tests {
         // Should not panic
         display_configuration_info(&config, &paths);
     }
+
+    #[test]
+    fn test_output_settings_edge_cases() {
+        let cli_config = CliConfig::default();
+        let config = Config::default();
+
+        // Test different combinations
+        let settings1 = setup_output_settings(&cli_config, &config);
+        assert!(!settings1.quiet);
+        assert!(!settings1.verbose);
+
+        // Test with quiet and verbose both set (quiet should win)
+        let mut cli_config_mixed = CliConfig::default();
+        cli_config_mixed.quiet = true;
+        cli_config_mixed.verbose = true;
+        let settings2 = setup_output_settings(&cli_config_mixed, &config);
+        assert!(settings2.quiet);
+        assert!(!settings2.verbose); // verbose gets overridden by quiet
+    }
+
+    #[test]
+    fn test_load_and_merge_config_edge_cases() {
+        // Test with no_config = true
+        let mut cli_config = CliConfig::default();
+        cli_config.no_config = true;
+
+        let result = load_and_merge_config(&cli_config);
+        assert!(result.is_ok());
+
+        // Should use default config when no_config is true
+        let config = result.unwrap();
+        assert_eq!(config.timeout, Config::default().timeout);
+    }
 }

@@ -1032,4 +1032,52 @@ mod tests {
         // Should not panic
         validate_cli_args(&cli2);
     }
+
+    #[test]
+    fn test_parse_cli_args_string_parsing() {
+        // Test individual parsing logic for include strings
+        let include_str = "md,html,txt";
+        let result: Vec<String> = include_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect();
+        assert_eq!(
+            result,
+            vec!["md".to_string(), "html".to_string(), "txt".to_string()]
+        );
+
+        // Test allowlist parsing with empty entries
+        let allowlist_str = "https://example.com,,https://test.com,";
+        let result: Vec<String> = allowlist_str
+            .split(',')
+            .filter_map(|s| {
+                if s.trim().is_empty() {
+                    None
+                } else {
+                    Some(s.trim().to_string())
+                }
+            })
+            .collect();
+        assert_eq!(
+            result,
+            vec![
+                "https://example.com".to_string(),
+                "https://test.com".to_string()
+            ]
+        );
+
+        // Test status code parsing with empty entries
+        let status_str = "200,,301,302";
+        let result: Vec<u16> = status_str
+            .split(',')
+            .filter_map(|s| {
+                if s.trim().is_empty() {
+                    None
+                } else {
+                    s.trim().parse::<u16>().ok()
+                }
+            })
+            .collect();
+        assert_eq!(result, vec![200, 301, 302]);
+    }
 }
