@@ -36,6 +36,8 @@ This project is a slim version of
 - **🔇 Quiet/Verbose Modes**: Better control over output verbosity
 - **🚨 Enhanced Error Handling**: Comprehensive error types with context
 - **⚡ Browser-like Behavior**: HTTP client that behaves like web browsers for maximum compatibility
+- **📈 Performance Analysis**: Built-in memory monitoring and optimization suggestions
+- **📊 HTML Dashboard**: Rich visual reporting with charts and performance metrics
 
 ## 📚 Table of Contents
 
@@ -57,6 +59,8 @@ This project is a slim version of
   - [📊 Progress Reporting](#-progress-reporting)
   - [🌐 Custom User Agent & Proxy Support](#-custom-user-agent--proxy-support)
   - [📤 Output Formats](#-output-formats)
+  - [📈 Performance Analysis](#-performance-analysis)
+  - [📊 HTML Dashboard](#-html-dashboard)
   - [Verbose Logging](#verbose-logging)
 - [🔒 Security Features](#-security-features)
 - [🚀 Performance Features](#-performance-features)
@@ -115,6 +119,10 @@ Network & Security:
 Configuration:
       --config <FILE>  Use specific config file
       --no-config      Ignore config files
+
+Performance Analysis:
+      --show-performance          Show memory usage and optimization suggestions
+      --html-dashboard <PATH>     Generate HTML dashboard report
 ```
 
 ## 📝 Examples
@@ -194,6 +202,10 @@ $ urlsup --format json README.md
 
 # Exclude URLs with patterns
 $ urlsup --exclude-pattern ".*\.local$" --exclude-pattern "^http://localhost.*" docs/
+
+# Performance analysis and reporting
+$ urlsup --show-performance README.md
+$ urlsup --html-dashboard report.html docs/
 ```
 
 ### Git Integration
@@ -305,7 +317,7 @@ $ urlsup completion-generate elvish > urlsup_completion.elv
 ```toml
 # .urlsup.toml - Project configuration for urlsup
 timeout = 30
-threads = 8
+threads = 8  # Number of concurrent threads (maps to --concurrency CLI option)
 allow_timeout = false
 file_types = ["md", "html", "txt"]
 
@@ -342,6 +354,9 @@ proxy = "http://proxy.company.com:8080"
 # Output settings
 output_format = "text"  # or "json" or "minimal"
 verbose = false
+
+# Performance analysis
+show_performance = false  # Show memory usage and optimization suggestions
 ```
 
 ### Configuration Discovery
@@ -528,6 +543,95 @@ Verbose mode provides detailed information about:
 - Request progress and timing
 - Configuration settings used
 
+### 📈 Performance Analysis
+
+Get detailed insights into memory usage and performance characteristics:
+
+```bash
+# Enable performance monitoring with optimization suggestions
+$ urlsup --show-performance README.md
+
+# Example output:
+# ⚡ Performance Analysis
+# Total execution time: 2.34s
+# Peak memory usage: 45.2 MB
+# Average CPU usage: 23.4%
+# 
+# 📊 Operation Breakdown:
+# • File processing: 0.12s (156 files)
+# • URL discovery: 0.89s (1,247 URLs found)
+# • URL validation: 1.33s (987 unique URLs validated)
+# 
+# 💡 Optimization Suggestions:
+# • Consider using --concurrency 8 for better performance
+# • Enable HEAD requests for faster validation (use_head_requests = true)
+# • Add .gitignore patterns to reduce file processing overhead
+```
+
+**Configuration:**
+```toml
+# In .urlsup.toml
+show_performance = true  # Always show performance analysis
+```
+
+**Use Cases:**
+- **Performance tuning**: Identify bottlenecks in large documentation sets
+- **CI/CD optimization**: Monitor resource usage in automated pipelines
+- **Capacity planning**: Understand resource requirements for scaling
+- **Troubleshooting**: Debug slow validation issues
+
+### 📊 HTML Dashboard
+
+Generate comprehensive visual reports with charts and detailed analysis:
+
+```bash
+# Generate HTML dashboard with performance metrics
+$ urlsup --html-dashboard report.html --show-performance docs/
+
+# Dashboard includes:
+# • Interactive charts showing validation results
+# • Performance metrics and timing breakdowns
+# • Detailed issue listings with file locations
+# • Configuration summary and recommendations
+# • Responsive design for desktop and mobile viewing
+```
+
+**Features:**
+- **📊 Interactive Charts**: Doughnut charts showing success/failure rates by category
+- **📈 Performance Metrics**: Memory usage, CPU utilization, and timing analysis
+- **🔍 Detailed Issue Tracking**: Line-by-line breakdown of broken URLs
+- **💡 Smart Recommendations**: Optimization suggestions based on actual usage patterns
+- **📱 Responsive Design**: Works perfectly on desktop, tablet, and mobile devices
+- **🎨 Modern UI**: Clean, professional styling with dark/light theme support
+
+**Dashboard Sections:**
+1. **Executive Summary**: Key metrics and success rates
+2. **Validation Results**: Interactive visualization of URL status distribution
+3. **Performance Analysis**: Detailed timing and resource usage breakdown
+4. **Issue Details**: Comprehensive list of broken URLs with context
+5. **Optimization Recommendations**: Actionable suggestions for improvement
+
+**Example Usage in CI/CD:**
+```yaml
+# .github/workflows/urls.yml
+- name: Validate URLs and generate report
+  run: |
+    urlsup --html-dashboard validation-report.html --show-performance docs/
+    
+- name: Upload report artifact
+  uses: actions/upload-artifact@v3
+  with:
+    name: url-validation-report
+    path: validation-report.html
+```
+
+**Sample Dashboard Output:**
+The HTML dashboard provides a complete overview of your URL validation results with:
+- Visual charts showing the health of your URLs
+- Performance insights to optimize future runs
+- Detailed breakdown of any issues found
+- Professional presentation suitable for stakeholder reporting
+
 ## 🔒 Security Features
 
 ### SSL Certificate Verification
@@ -602,6 +706,8 @@ threads = 16
 - **Optimized Deduplication**: O(n) hash-based instead of O(n²) sorting-based
 - **Memory-Efficient Streaming**: Handles large URL sets without memory bloat
 - **Adaptive Sizing**: Dynamic memory allocation based on file types and URL patterns
+- **SIMD-Optimized String Processing**: Uses `memchr` for vectorized URL pattern detection
+- **Vectorized Line Processing**: Chunked processing with cache-friendly memory access patterns
 
 ### 🔄 Concurrent Processing
 - **Dynamic Batch Sizing**: Batch sizes adapt to URL count and system resources (2-100 range)

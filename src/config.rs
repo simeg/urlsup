@@ -60,6 +60,12 @@ pub struct Config {
 
     /// Failure threshold percentage - fail only if more than X% of URLs are broken (0-100)
     pub failure_threshold: Option<f64>,
+
+    /// Show memory usage and performance optimization suggestions
+    pub show_performance: Option<bool>,
+
+    /// Generate HTML dashboard report
+    pub html_dashboard_path: Option<String>,
 }
 
 impl Default for Config {
@@ -82,6 +88,8 @@ impl Default for Config {
             verbose: Some(false),
             use_head_requests: Some(false), // Default to GET for compatibility
             failure_threshold: None,        // No threshold by default - fail on any broken URL
+            show_performance: Some(false),  // Disabled by default
+            html_dashboard_path: None,      // No dashboard by default
         }
     }
 }
@@ -188,6 +196,14 @@ impl Config {
         }
         if cli_config.skip_ssl_verification {
             self.skip_ssl_verification = Some(true);
+        }
+
+        // Performance Analysis
+        if cli_config.show_performance {
+            self.show_performance = Some(true);
+        }
+        if let Some(ref dashboard_path) = cli_config.html_dashboard_path {
+            self.html_dashboard_path = Some(dashboard_path.clone());
         }
     }
 
@@ -339,6 +355,10 @@ pub struct CliConfig {
     // Configuration
     pub config_file: Option<String>, // --config
     pub no_config: bool,             // --no-config
+
+    // Performance Analysis
+    pub show_performance: bool,              // --show-performance
+    pub html_dashboard_path: Option<String>, // --html-dashboard
 }
 
 #[cfg(test)]
@@ -556,6 +576,8 @@ mod tests {
             config_file: Some("/path/to/config".to_string()),
             no_config: true,
             failure_threshold: Some(15.0),
+            show_performance: false,
+            html_dashboard_path: None,
         };
 
         config.merge_with_cli(&cli_config);

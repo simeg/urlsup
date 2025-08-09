@@ -3,10 +3,12 @@ use urlsup::cli::{Cli, Commands, cli_to_config};
 use urlsup::completion::{install_completion, print_completions};
 use urlsup::config::Config;
 use urlsup::constants::{error_messages, output_formats};
+use urlsup::dashboard::{DashboardData, HtmlDashboard};
 use urlsup::finder::{Finder, UrlFinder};
 use urlsup::logging;
 use urlsup::output;
 use urlsup::path_utils::expand_paths;
+use urlsup::performance::PerformanceProfiler;
 use urlsup::progress::ProgressReporter;
 use urlsup::validator::{ValidateUrls, Validator};
 
@@ -68,12 +70,25 @@ pub async fn run_urlsup_logic(cli: &Cli) -> Result<i32, Box<dyn std::error::Erro
     // Load and merge configuration
     let config = load_and_merge_config(&cli_config)?;
 
+    // Initialize performance profiler if requested
+    let mut profiler = if config.show_performance.unwrap_or(false) {
+        Some(PerformanceProfiler::new())
+    } else {
+        None
+    };
+
     // Setup logging and output settings
     let output_settings = setup_output_settings(&cli_config, &config);
     logging::init_logger(output_settings.verbose, output_settings.quiet);
 
     // Process files and expand paths
+    let timer = profiler
+        .as_mut()
+        .map(|p| p.start_operation("file_processing"));
     let expanded_paths = process_and_expand_files(cli, &config)?;
+    if let (Some(profiler), Some(timer)) = (profiler.as_mut(), timer) {
+        profiler.finish_operation(timer, expanded_paths.len());
+    }
 
     // Display configuration info if needed
     if output_settings.should_show_config_info() {
@@ -81,7 +96,13 @@ pub async fn run_urlsup_logic(cli: &Cli) -> Result<i32, Box<dyn std::error::Erro
     }
 
     // Find and filter URLs
+    let timer = profiler
+        .as_mut()
+        .map(|p| p.start_operation("url_discovery"));
     let filtered_urls = find_and_filter_urls(&expanded_paths, &config)?;
+    if let (Some(profiler), Some(timer)) = (profiler.as_mut(), timer) {
+        profiler.finish_operation(timer, filtered_urls.len());
+    }
 
     // Display URL discovery info if needed
     if output_settings.should_show_url_info() {
@@ -92,8 +113,15 @@ pub async fn run_urlsup_logic(cli: &Cli) -> Result<i32, Box<dyn std::error::Erro
     let mut progress = create_progress_reporter(&output_settings);
 
     // Validate URLs and process results
+    let timer = profiler
+        .as_mut()
+        .map(|p| p.start_operation("url_validation"));
     let validation_results = validate_urls(&filtered_urls, &config, progress.as_mut()).await?;
     let total_validated = validation_results.len();
+    if let (Some(profiler), Some(timer)) = (profiler.as_mut(), timer) {
+        profiler.finish_operation(timer, total_validated);
+    }
+
     let filtered_results = apply_result_filters(validation_results, &config);
 
     // Finalize progress reporting
@@ -117,6 +145,34 @@ pub async fn run_urlsup_logic(cli: &Cli) -> Result<i32, Box<dyn std::error::Erro
     // Display final results and determine exit code
     let (_, issues_found) =
         display_final_results(&filtered_results, &output_settings, &config, &metadata);
+
+    // Generate performance report if requested
+    let performance_report = if let Some(profiler) = profiler {
+        profiler.display_performance_summary();
+
+        Some(profiler.generate_report())
+    } else {
+        None
+    };
+
+    // Generate HTML dashboard if requested
+    if let Some(ref dashboard_path) = config.html_dashboard_path {
+        let dashboard_data = DashboardData {
+            metadata: metadata.clone(),
+            results: filtered_results.clone(),
+            performance: performance_report,
+            config: config.clone(),
+            timestamp: chrono::Utc::now()
+                .format("%Y-%m-%d %H:%M:%S UTC")
+                .to_string(),
+        };
+
+        if let Err(e) = HtmlDashboard::generate_dashboard(&dashboard_data, dashboard_path) {
+            eprintln!("Warning: Failed to generate HTML dashboard: {}", e);
+        } else {
+            println!("📊 HTML dashboard generated: {}", dashboard_path);
+        }
+    }
 
     Ok(determine_exit_code(issues_found, total_validated, &config))
 }
@@ -436,6 +492,8 @@ mod tests {
             insecure: false,
             config: None,
             no_config: false,
+            show_performance: false,
+            html_dashboard: None,
         }
     }
 

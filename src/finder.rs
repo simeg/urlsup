@@ -2,6 +2,7 @@ use grep::regex::RegexMatcher;
 use grep::searcher::Searcher;
 use grep::searcher::sinks::UTF8;
 use linkify::{LinkFinder, LinkKind};
+use memchr::memchr_iter;
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
 
@@ -72,6 +73,58 @@ impl UrlFinder for Finder {
 type UrlMatch = (String, String, u64);
 
 impl Finder {
+    /// Fast vectorized search for URL-like patterns in file content
+    /// Uses SIMD-optimized memchr for rapid pattern scanning
+    #[allow(dead_code)]
+    fn fast_url_scan(content: &[u8]) -> Vec<usize> {
+        let mut potential_urls = Vec::new();
+
+        // SIMD-optimized search for 'h' characters (start of http/https)
+        for pos in memchr_iter(b'h', content) {
+            // Quick check if this could be the start of http:// or https://
+            if pos + 7 <= content.len() {
+                let slice = &content[pos..pos + 7];
+                if slice.starts_with(b"http://")
+                    || (pos + 8 <= content.len() && content[pos..pos + 8].starts_with(b"https://"))
+                {
+                    potential_urls.push(pos);
+                }
+            }
+        }
+
+        potential_urls
+    }
+
+    /// Vectorized line processing for better performance on large files
+    #[allow(dead_code)]
+    fn process_lines_vectorized(content: &str) -> Vec<(String, u64)> {
+        let lines: Vec<&str> = content.lines().collect();
+        let mut results = Vec::with_capacity(lines.len());
+
+        // Process lines in chunks for better cache locality
+        const CHUNK_SIZE: usize = 64;
+
+        lines
+            .chunks(CHUNK_SIZE)
+            .enumerate()
+            .for_each(|(chunk_idx, chunk)| {
+                for (line_idx, line) in chunk.iter().enumerate() {
+                    let line_number = (chunk_idx * CHUNK_SIZE + line_idx + 1) as u64;
+
+                    // Quick SIMD check for potential URLs before expensive regex
+                    if memchr::memchr(b'h', line.as_bytes()).is_some() ||
+                       memchr::memchr(b'w', line.as_bytes()).is_some() || // www
+                       memchr::memchr(b'f', line.as_bytes()).is_some()
+                    {
+                        // ftp
+                        results.push((line.to_string(), line_number));
+                    }
+                }
+            });
+
+        results
+    }
+
     /// Estimate URL capacity based on file extension and initial match count
     fn estimate_url_capacity(path: &Path, match_count: usize) -> usize {
         if match_count == 0 {

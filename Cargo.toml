@@ -18,25 +18,42 @@ include = [
 ]
 
 [dependencies]
+# Core CLI and async runtime
 async-trait = "0.1"
 clap = { version = "4.5", default-features = false, features = ["std", "cargo", "help", "usage", "error-context", "derive"] }
 clap_complete = "4.5"
-reqwest = "0.12"
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread"] }
 futures = "0.3"
+
+# HTTP client and networking (fixes RUSTSEC-2024-0421 via updated idna dependency)
+reqwest = "0.12"
+
+# File processing and pattern matching
 grep = "0.3"
 linkify = "0.10"
+ignore = "0.4"
+regex = "1.11"
+
+# Configuration and serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.9"
+chrono = { version = "0.4", features = ["serde"] }
+
+# System utilities
 num_cpus = "1.17"
 once_cell = "1.21"
-ignore = "0.4"
-serde = { version = "1.0", features = ["derive"] }
-toml = "0.9"
 indicatif = "0.18"
-regex = "1.11"
-rustc-hash = "2.0"
 log = "0.4"
 env_logger = "0.11"
-rayon = "1.10"
+
+# Performance optimization
+rayon = "1.10"                  # Parallel processing
+rustc-hash = "2.0"              # Fast hashing
+memchr = "2.7"                  # SIMD-optimized string searching
+
+# Performance analysis
+sysinfo = "0.36"                # System resource monitoring
 
 [dev-dependencies]
 tempfile = "3.20"

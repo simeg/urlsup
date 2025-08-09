@@ -107,6 +107,15 @@ pub struct Cli {
     /// Ignore config files
     #[arg(long, help_heading = "Configuration")]
     pub no_config: bool,
+
+    // Performance Analysis
+    /// Show memory usage and optimization suggestions
+    #[arg(long, help_heading = "Performance Analysis")]
+    pub show_performance: bool,
+
+    /// Generate HTML dashboard report
+    #[arg(long, value_name = "PATH", help_heading = "Performance Analysis")]
+    pub html_dashboard: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -296,6 +305,13 @@ pub fn parse_cli_args(matches: &clap::ArgMatches) -> CliConfig {
 
     cli_config.no_config = matches.get_flag("no-config");
 
+    // Performance Analysis
+    cli_config.show_performance = matches.get_flag("show-performance");
+
+    if let Some(dashboard_path) = matches.get_one::<String>("html-dashboard") {
+        cli_config.html_dashboard_path = Some(dashboard_path.clone());
+    }
+
     cli_config
 }
 
@@ -435,6 +451,10 @@ pub fn cli_to_config(cli: &Cli) -> CliConfig {
     cli_config.config_file = cli.config.clone();
     cli_config.no_config = cli.no_config;
 
+    // Performance Analysis
+    cli_config.show_performance = cli.show_performance;
+    cli_config.html_dashboard_path = cli.html_dashboard.clone();
+
     cli_config
 }
 
@@ -505,9 +525,8 @@ mod tests {
     use super::*;
     use crate::constants::output_formats;
 
-    #[test]
-    fn test_cli_to_config_default() {
-        let cli = Cli {
+    fn create_default_cli() -> Cli {
+        Cli {
             command: None,
             files: vec![],
             recursive: false,
@@ -531,7 +550,14 @@ mod tests {
             insecure: false,
             config: None,
             no_config: false,
-        };
+            show_performance: false,
+            html_dashboard: None,
+        }
+    }
+
+    #[test]
+    fn test_cli_to_config_default() {
+        let cli = create_default_cli();
 
         let config = cli_to_config(&cli);
 
@@ -562,31 +588,29 @@ mod tests {
 
     #[test]
     fn test_cli_to_config_all_options() {
-        let cli = Cli {
-            command: None,
-            files: vec!["test.md".to_string()],
-            recursive: true,
-            timeout: Some(60),
-            concurrency: Some(8),
-            include: Some("md,txt".to_string()),
-            allowlist: Some("example.com,google.com".to_string()),
-            allow_status: Some("200,404".to_string()),
-            exclude_pattern: vec![".*test.*".to_string(), ".*debug.*".to_string()],
-            retry: Some(3),
-            retry_delay: Some(2000),
-            rate_limit: Some(100),
-            allow_timeout: true,
-            failure_threshold: Some(10.5),
-            quiet: true,
-            verbose: true,
-            format: output_formats::JSON.to_string(),
-            no_progress: true,
-            user_agent: Some("CustomAgent/1.0".to_string()),
-            proxy: Some("http://proxy:8080".to_string()),
-            insecure: true,
-            config: Some("config.toml".to_string()),
-            no_config: true,
-        };
+        let mut cli = create_default_cli();
+        cli.files = vec!["test.md".to_string()];
+        cli.recursive = true;
+        cli.timeout = Some(60);
+        cli.concurrency = Some(8);
+        cli.include = Some("md,txt".to_string());
+        cli.allowlist = Some("example.com,google.com".to_string());
+        cli.allow_status = Some("200,404".to_string());
+        cli.exclude_pattern = vec![".*test.*".to_string(), ".*debug.*".to_string()];
+        cli.retry = Some(3);
+        cli.retry_delay = Some(2000);
+        cli.rate_limit = Some(100);
+        cli.allow_timeout = true;
+        cli.failure_threshold = Some(10.5);
+        cli.quiet = true;
+        cli.verbose = true;
+        cli.format = output_formats::JSON.to_string();
+        cli.no_progress = true;
+        cli.user_agent = Some("CustomAgent/1.0".to_string());
+        cli.proxy = Some("http://proxy:8080".to_string());
+        cli.insecure = true;
+        cli.config = Some("config.toml".to_string());
+        cli.no_config = true;
 
         let config = cli_to_config(&cli);
 
@@ -623,31 +647,14 @@ mod tests {
 
     #[test]
     fn test_cli_to_config_empty_strings() {
-        let cli = Cli {
-            command: None,
-            files: vec![],
-            recursive: false,
-            timeout: None,
-            concurrency: None,
-            include: Some("".to_string()),
-            allowlist: Some("".to_string()),
-            allow_status: Some("".to_string()),
-            exclude_pattern: vec![],
-            retry: None,
-            retry_delay: None,
-            rate_limit: None,
-            allow_timeout: false,
-            failure_threshold: None,
-            quiet: false,
-            verbose: false,
-            format: output_formats::MINIMAL.to_string(),
-            no_progress: false,
-            user_agent: Some("".to_string()),
-            proxy: Some("".to_string()),
-            insecure: false,
-            config: Some("".to_string()),
-            no_config: false,
-        };
+        let mut cli = create_default_cli();
+        cli.include = Some("".to_string());
+        cli.allowlist = Some("".to_string());
+        cli.allow_status = Some("".to_string());
+        cli.format = output_formats::MINIMAL.to_string();
+        cli.user_agent = Some("".to_string());
+        cli.proxy = Some("".to_string());
+        cli.config = Some("".to_string());
 
         let config = cli_to_config(&cli);
 
@@ -665,31 +672,10 @@ mod tests {
 
     #[test]
     fn test_cli_to_config_whitespace_trimming() {
-        let cli = Cli {
-            command: None,
-            files: vec![],
-            recursive: false,
-            timeout: None,
-            concurrency: None,
-            include: Some("  md  ,  txt  ".to_string()),
-            allowlist: Some("  example.com  ,  google.com  ".to_string()),
-            allow_status: Some("  200  ,  404  ".to_string()),
-            exclude_pattern: vec![],
-            retry: None,
-            retry_delay: None,
-            rate_limit: None,
-            allow_timeout: false,
-            failure_threshold: None,
-            quiet: false,
-            verbose: false,
-            format: output_formats::DEFAULT.to_string(),
-            no_progress: false,
-            user_agent: None,
-            proxy: None,
-            insecure: false,
-            config: None,
-            no_config: false,
-        };
+        let mut cli = create_default_cli();
+        cli.include = Some("  md  ,  txt  ".to_string());
+        cli.allowlist = Some("  example.com  ,  google.com  ".to_string());
+        cli.allow_status = Some("  200  ,  404  ".to_string());
 
         let config = cli_to_config(&cli);
 
@@ -706,31 +692,9 @@ mod tests {
 
     #[test]
     fn test_cli_to_config_mixed_empty_values() {
-        let cli = Cli {
-            command: None,
-            files: vec![],
-            recursive: false,
-            timeout: None,
-            concurrency: None,
-            include: None,
-            allowlist: Some("example.com, , google.com".to_string()),
-            allow_status: Some("200, , 404".to_string()),
-            exclude_pattern: vec![],
-            retry: None,
-            retry_delay: None,
-            rate_limit: None,
-            allow_timeout: false,
-            failure_threshold: None,
-            quiet: false,
-            verbose: false,
-            format: output_formats::DEFAULT.to_string(),
-            no_progress: false,
-            user_agent: None,
-            proxy: None,
-            insecure: false,
-            config: None,
-            no_config: false,
-        };
+        let mut cli = create_default_cli();
+        cli.allowlist = Some("example.com, , google.com".to_string());
+        cli.allow_status = Some("200, , 404".to_string());
 
         let config = cli_to_config(&cli);
 
@@ -743,31 +707,14 @@ mod tests {
 
     #[test]
     fn test_cli_to_config_boundary_values() {
-        let cli = Cli {
-            command: None,
-            files: vec![],
-            recursive: false,
-            timeout: Some(1),
-            concurrency: Some(1),
-            include: None,
-            allowlist: None,
-            allow_status: Some("100,599".to_string()),
-            exclude_pattern: vec![],
-            retry: Some(0),
-            retry_delay: Some(0),
-            rate_limit: Some(0),
-            allow_timeout: false,
-            failure_threshold: Some(0.0),
-            quiet: false,
-            verbose: false,
-            format: output_formats::DEFAULT.to_string(),
-            no_progress: false,
-            user_agent: None,
-            proxy: None,
-            insecure: false,
-            config: None,
-            no_config: false,
-        };
+        let mut cli = create_default_cli();
+        cli.timeout = Some(1);
+        cli.concurrency = Some(1);
+        cli.allow_status = Some("100,599".to_string());
+        cli.retry = Some(0);
+        cli.retry_delay = Some(0);
+        cli.rate_limit = Some(0);
+        cli.failure_threshold = Some(0.0);
 
         let config = cli_to_config(&cli);
 
@@ -782,31 +729,8 @@ mod tests {
 
     #[test]
     fn test_cli_to_config_edge_case_failure_threshold() {
-        let cli = Cli {
-            command: None,
-            files: vec![],
-            recursive: false,
-            timeout: None,
-            concurrency: None,
-            include: None,
-            allowlist: None,
-            allow_status: None,
-            exclude_pattern: vec![],
-            retry: None,
-            retry_delay: None,
-            rate_limit: None,
-            allow_timeout: false,
-            failure_threshold: Some(100.0),
-            quiet: false,
-            verbose: false,
-            format: output_formats::DEFAULT.to_string(),
-            no_progress: false,
-            user_agent: None,
-            proxy: None,
-            insecure: false,
-            config: None,
-            no_config: false,
-        };
+        let mut cli = create_default_cli();
+        cli.failure_threshold = Some(100.0);
 
         let config = cli_to_config(&cli);
         assert_eq!(config.failure_threshold, Some(100.0));
@@ -814,31 +738,12 @@ mod tests {
 
     #[test]
     fn test_validate_cli_args_valid() {
-        let cli = Cli {
-            command: None,
-            files: vec!["test.md".to_string()],
-            recursive: false,
-            timeout: Some(30),
-            concurrency: Some(4),
-            include: None,
-            allowlist: None,
-            allow_status: Some("200,404".to_string()),
-            exclude_pattern: vec![],
-            retry: None,
-            retry_delay: None,
-            rate_limit: None,
-            allow_timeout: false,
-            failure_threshold: Some(10.0),
-            quiet: false,
-            verbose: false,
-            format: output_formats::DEFAULT.to_string(),
-            no_progress: false,
-            user_agent: None,
-            proxy: None,
-            insecure: false,
-            config: None,
-            no_config: false,
-        };
+        let mut cli = create_default_cli();
+        cli.files = vec!["test.md".to_string()];
+        cli.timeout = Some(30);
+        cli.concurrency = Some(4);
+        cli.allow_status = Some("200,404".to_string());
+        cli.failure_threshold = Some(10.0);
 
         // Should not panic
         validate_cli_args(&cli);
@@ -846,31 +751,9 @@ mod tests {
 
     #[test]
     fn test_validate_cli_args_high_timeout_warning() {
-        let cli = Cli {
-            command: None,
-            files: vec!["test.md".to_string()],
-            recursive: false,
-            timeout: Some(3700), // > MAX_TIMEOUT_SECONDS
-            concurrency: None,
-            include: None,
-            allowlist: None,
-            allow_status: None,
-            exclude_pattern: vec![],
-            retry: None,
-            retry_delay: None,
-            rate_limit: None,
-            allow_timeout: false,
-            failure_threshold: None,
-            quiet: false,
-            verbose: false,
-            format: output_formats::DEFAULT.to_string(),
-            no_progress: false,
-            user_agent: None,
-            proxy: None,
-            insecure: false,
-            config: None,
-            no_config: false,
-        };
+        let mut cli = create_default_cli();
+        cli.files = vec!["test.md".to_string()];
+        cli.timeout = Some(3700); // > MAX_TIMEOUT_SECONDS
 
         // Should not panic, just print warning
         validate_cli_args(&cli);
@@ -878,31 +761,9 @@ mod tests {
 
     #[test]
     fn test_validate_cli_args_high_concurrency_warning() {
-        let cli = Cli {
-            command: None,
-            files: vec!["test.md".to_string()],
-            recursive: false,
-            timeout: None,
-            concurrency: Some(150), // > 100
-            include: None,
-            allowlist: None,
-            allow_status: None,
-            exclude_pattern: vec![],
-            retry: None,
-            retry_delay: None,
-            rate_limit: None,
-            allow_timeout: false,
-            failure_threshold: None,
-            quiet: false,
-            verbose: false,
-            format: output_formats::DEFAULT.to_string(),
-            no_progress: false,
-            user_agent: None,
-            proxy: None,
-            insecure: false,
-            config: None,
-            no_config: false,
-        };
+        let mut cli = create_default_cli();
+        cli.files = vec!["test.md".to_string()];
+        cli.concurrency = Some(150); // > 100
 
         // Should not panic, just print warning
         validate_cli_args(&cli);
@@ -910,31 +771,9 @@ mod tests {
 
     #[test]
     fn test_validate_cli_args_valid_status_codes() {
-        let cli = Cli {
-            command: None,
-            files: vec!["test.md".to_string()],
-            recursive: false,
-            timeout: None,
-            concurrency: None,
-            include: None,
-            allowlist: None,
-            allow_status: Some("100,200,300,400,500,599".to_string()),
-            exclude_pattern: vec![],
-            retry: None,
-            retry_delay: None,
-            rate_limit: None,
-            allow_timeout: false,
-            failure_threshold: None,
-            quiet: false,
-            verbose: false,
-            format: output_formats::DEFAULT.to_string(),
-            no_progress: false,
-            user_agent: None,
-            proxy: None,
-            insecure: false,
-            config: None,
-            no_config: false,
-        };
+        let mut cli = create_default_cli();
+        cli.files = vec!["test.md".to_string()];
+        cli.allow_status = Some("100,200,300,400,500,599".to_string());
 
         // Should not panic
         validate_cli_args(&cli);
@@ -942,31 +781,9 @@ mod tests {
 
     #[test]
     fn test_validate_cli_args_empty_status_codes() {
-        let cli = Cli {
-            command: None,
-            files: vec!["test.md".to_string()],
-            recursive: false,
-            timeout: None,
-            concurrency: None,
-            include: None,
-            allowlist: None,
-            allow_status: Some("200, , 404".to_string()),
-            exclude_pattern: vec![],
-            retry: None,
-            retry_delay: None,
-            rate_limit: None,
-            allow_timeout: false,
-            failure_threshold: None,
-            quiet: false,
-            verbose: false,
-            format: output_formats::DEFAULT.to_string(),
-            no_progress: false,
-            user_agent: None,
-            proxy: None,
-            insecure: false,
-            config: None,
-            no_config: false,
-        };
+        let mut cli = create_default_cli();
+        cli.files = vec!["test.md".to_string()];
+        cli.allow_status = Some("200, , 404".to_string());
 
         // Should not panic - empty status codes are ignored
         validate_cli_args(&cli);
@@ -974,60 +791,16 @@ mod tests {
 
     #[test]
     fn test_validate_cli_args_valid_failure_threshold_boundaries() {
-        let cli = Cli {
-            command: None,
-            files: vec!["test.md".to_string()],
-            recursive: false,
-            timeout: None,
-            concurrency: None,
-            include: None,
-            allowlist: None,
-            allow_status: None,
-            exclude_pattern: vec![],
-            retry: None,
-            retry_delay: None,
-            rate_limit: None,
-            allow_timeout: false,
-            failure_threshold: Some(0.0),
-            quiet: false,
-            verbose: false,
-            format: output_formats::DEFAULT.to_string(),
-            no_progress: false,
-            user_agent: None,
-            proxy: None,
-            insecure: false,
-            config: None,
-            no_config: false,
-        };
+        let mut cli = create_default_cli();
+        cli.files = vec!["test.md".to_string()];
+        cli.failure_threshold = Some(0.0);
 
         // Should not panic
         validate_cli_args(&cli);
 
-        let cli2 = Cli {
-            command: None,
-            files: vec!["test.md".to_string()],
-            recursive: false,
-            timeout: None,
-            concurrency: None,
-            include: None,
-            allowlist: None,
-            allow_status: None,
-            exclude_pattern: vec![],
-            retry: None,
-            retry_delay: None,
-            rate_limit: None,
-            allow_timeout: false,
-            failure_threshold: Some(100.0),
-            quiet: false,
-            verbose: false,
-            format: output_formats::DEFAULT.to_string(),
-            no_progress: false,
-            user_agent: None,
-            proxy: None,
-            insecure: false,
-            config: None,
-            no_config: false,
-        };
+        let mut cli2 = create_default_cli();
+        cli2.files = vec!["test.md".to_string()];
+        cli2.failure_threshold = Some(100.0);
 
         // Should not panic
         validate_cli_args(&cli2);

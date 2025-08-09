@@ -1,10 +1,10 @@
 name: CI
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+  pull_request:            # validate all PRs
+    branches: ["**"]
+  push:                    # only after merge or when tagging
+    branches: ["main", "master"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0  # Needed for codecov
 
       - name: Setup Rust with caching and tools
-        uses: brndnmtthws/rust-action@v1
+        uses: brndnmtthws/rust-action@v1  # Comes with cargo-tarpaulin pre-built
         with:
           toolchain: stable
           enable-sccache: true
