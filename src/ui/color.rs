@@ -7,7 +7,8 @@ impl Colors {
     pub const BOLD: &'static str = "\x1b[1m";
     pub const DIM: &'static str = "\x1b[2m";
 
-    // Colors
+    // Basic colors
+    pub const BLACK: &'static str = "\x1b[30m";
     pub const RED: &'static str = "\x1b[31m";
     pub const GREEN: &'static str = "\x1b[32m";
     pub const YELLOW: &'static str = "\x1b[33m";
@@ -17,6 +18,7 @@ impl Colors {
     pub const WHITE: &'static str = "\x1b[37m";
 
     // Bright colors
+    pub const BRIGHT_BLACK: &'static str = "\x1b[90m";
     pub const BRIGHT_RED: &'static str = "\x1b[91m";
     pub const BRIGHT_GREEN: &'static str = "\x1b[92m";
     pub const BRIGHT_YELLOW: &'static str = "\x1b[93m";
@@ -35,29 +37,78 @@ pub fn colorize(text: &str, color: &str) -> String {
     }
 }
 
-/// Check if the current environment supports ANSI colors and emojis
+/// Enhanced terminal capability detection
 pub fn supports_formatting() -> bool {
+    use std::env;
+
     // Check if colors/emojis are explicitly disabled
-    if std::env::var("NO_COLOR").is_ok() {
+    if env::var("NO_COLOR").is_ok() || env::var("FORCE_COLOR").as_deref() == Ok("0") {
         return false;
     }
 
+    // Force enable if explicitly requested
+    if env::var("FORCE_COLOR").is_ok() {
+        return true;
+    }
+
     // Disable formatting when running tests
-    if cfg!(test) || std::env::var("RUST_TEST_TIME_UNIT").is_ok() {
+    if cfg!(test) || env::var("RUST_TEST_TIME_UNIT").is_ok() {
+        return false;
+    }
+
+    // Check if output is being redirected
+    if !atty::is(atty::Stream::Stdout) {
         return false;
     }
 
     // Check TERM environment variable
-    if let Ok(term) = std::env::var("TERM") {
+    if let Ok(term) = env::var("TERM") {
         if term == "dumb" || term.is_empty() {
             return false;
         }
-        // Most terminals support ANSI colors and emojis
-        return true;
+
+        // Check for known capable terminals
+        if term.contains("color")
+            || term.contains("256")
+            || term.starts_with("xterm")
+            || term.starts_with("screen")
+            || term.starts_with("tmux")
+            || term == "linux"
+        {
+            return true;
+        }
     }
 
-    // Simple heuristic: assume formatting support if TERM is set
-    std::env::var("TERM").is_ok()
+    // Check for modern terminal programs
+    if let Ok(term_program) = env::var("TERM_PROGRAM") {
+        match term_program.as_str() {
+            "Apple_Terminal" | "iTerm.app" | "vscode" | "Hyper" | "Alacritty" | "kitty"
+            | "WezTerm" => return true,
+            _ => {}
+        }
+    }
+
+    // Check CI environments that support colors
+    if env::var("CI").is_ok() {
+        let ci_supports_color = [
+            "GITHUB_ACTIONS",
+            "TRAVIS",
+            "CIRCLECI",
+            "APPVEYOR",
+            "GITLAB_CI",
+            "AZURE_HTTP_USER_AGENT",
+            "BUILDKITE",
+        ]
+        .iter()
+        .any(|var| env::var(var).is_ok());
+
+        if ci_supports_color {
+            return true;
+        }
+    }
+
+    // Default: assume no support if we can't detect
+    false
 }
 
 /// Check if the current environment supports ANSI colors (alias for backwards compatibility)

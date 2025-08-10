@@ -9,6 +9,7 @@ pub mod color;
 pub mod completion;
 pub mod output;
 pub mod progress;
+pub mod theme;
 pub mod wizard;
 
 // Re-export commonly used items

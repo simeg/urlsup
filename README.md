@@ -62,6 +62,7 @@ to quickly get up and running.
   - [🌐 Custom User Agent & Proxy Support](#-custom-user-agent--proxy-support)
   - [📤 Output Formats](#-output-formats)
   - [📈 Performance Analysis](#-performance-analysis)
+  - [🎨 Adaptive Color Schemes](#-adaptive-color-schemes)
   - [📊 HTML Dashboard](#-html-dashboard)
   - [Verbose Logging](#verbose-logging)
 - [🔒 Security Features](#-security-features)
@@ -625,7 +626,38 @@ show_performance = true  # Always show performance analysis
 - **Capacity planning**: Understand resource requirements for scaling
 - **Troubleshooting**: Debug slow validation issues
 
-### 📊 HTML Dashboard
+### 🎨 Adaptive Color Schemes
+
+`urlsup` automatically detects your terminal's theme and adapts its color scheme for optimal readability:
+
+**Smart Terminal Detection:**
+- **Light Themes**: Uses dark text colors with high contrast for readability
+- **Dark Themes**: Uses bright colors optimized for dark backgrounds  
+- **Unknown Themes**: Falls back to universally compatible colors
+
+**Detection Methods:**
+- Environment variables (`URLSUP_THEME`, `COLORFGBG`, `TERM_PROGRAM`)
+- Terminal program detection (iTerm, VS Code, Apple Terminal, etc.)
+- SSH context detection (defaults to dark theme for remote sessions)
+- True color support detection for enhanced color rendering
+
+**Manual Override:**
+```bash
+# Force a specific theme
+export URLSUP_THEME=light    # or 'dark' or 'unknown'
+urlsup README.md
+
+# The tool will adapt all colors accordingly
+```
+
+**WCAG Accessibility Compliance:**
+- All color combinations meet WCAG AA accessibility standards (4.5:1 contrast ratio)
+- Automatic fallback to high-contrast colors when needed
+- Semantic color meanings remain consistent across themes
+
+This ensures that `urlsup` looks great and remains readable regardless of your terminal setup, whether you're using a light IDE theme, dark terminal, or working over SSH.
+
+## 📊 HTML Dashboard
 
 Generate comprehensive visual reports with charts and detailed analysis:
 
