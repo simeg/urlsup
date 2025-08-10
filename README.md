@@ -6,14 +6,17 @@ useful for lists, repos or any type of project containing URLs that you want to
 be up.
 
 It's written in Rust (stable) and executes the requests async in multiple
-threads, making it very fast. **Uses browser-like HTTP client behavior with
+threads, making it _very_ fast. **Uses browser-like HTTP client behavior with
 automatic protocol negotiation and reliable connection handling.** This in
 combination with its ease of use makes it the perfect tool for your CI pipeline.
 
-See the Github Action [`urlsup-action`](https://github.com/simeg/urlsup-action)
-to quickly get up and running.
+⚡️ **A modern and significantly faster alternative to
+[`awesome_bot`](https://github.com/dkhamsing/awesome_bot)** ⚡️
 
-**A modern, actively maintained, and significantly faster alternative to [`awesome_bot`](https://github.com/dkhamsing/awesome_bot).**
+Use the GitHub Action [`urlsup-action`](https://github.com/simeg/urlsup-action)
+to quickly get your CI pipeline up and running.
+
+Using [`awesome_bot`](https://github.com/dkhamsing/awesome_bot) today? Here's a [migration guide](docs/MIGRATION_AWESOME_BOT.md).
 
 <img src="banner.png" alt="Dotfiles Banner" width="100%" style="display: block; margin: 0 auto;">
 
