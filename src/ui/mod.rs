@@ -9,6 +9,7 @@ pub mod color;
 pub mod completion;
 pub mod output;
 pub mod progress;
+pub mod wizard;
 
 // Re-export commonly used items
 pub use cli::{Cli, Commands, cli_to_config};

@@ -52,7 +52,7 @@ to quickly get up and running.
   - [Git Integration](#git-integration)
 - [📦 Installation](#-installation)
 - [🚀 Shell Completions Installation](#-shell-completions-installation)
-- [⚙️ Configuration File](#️-configuration-file)
+- [🧙‍♂️ Configuration Wizard](#-configuration-wizard)
   - [Configuration Discovery](#configuration-discovery)
 - [🔧 Advanced Features](#-advanced-features)
   - [🎯 Failure Threshold](#-failure-threshold)
@@ -80,6 +80,7 @@ Usage: urlsup [OPTIONS] [FILES]... [COMMAND]
 Commands:
   completion-generate Generate shell completions
   completion-install  Install shell completions to standard location
+  config-wizard       Run interactive configuration wizard
   help                Print this message or the help of the given subcommand(s)
 
 Arguments:
@@ -302,19 +303,61 @@ $ urlsup completion-generate elvish > urlsup_completion.elv
 
 ### Supported Shells
 
-| Shell | Auto-Install | Manual Install | Standard Location |
-|-------|--------------|----------------|-------------------|
-| bash  | ✅ Yes | ✅ Yes | `~/.local/share/bash-completion/completions/urlsup` |
-| zsh   | ✅ Yes | ✅ Yes | `~/.local/share/zsh/site-functions/_urlsup` |
-| fish  | ✅ Yes | ✅ Yes | `~/.config/fish/completions/urlsup.fish` |
-| PowerShell | ❌ Manual only | ✅ Yes | Add to `$PROFILE` manually |
-| Elvish | ❌ Manual only | ✅ Yes | Add to `~/.elvish/rc.elv` manually |
+| Shell      | Auto-Install  | Manual Install | Standard Location                                   |
+|------------|---------------|----------------|-----------------------------------------------------|
+| bash       | ✅ Yes         | ✅ Yes          | `~/.local/share/bash-completion/completions/urlsup` |
+| zsh        | ✅ Yes         | ✅ Yes          | `~/.local/share/zsh/site-functions/_urlsup`         |
+| fish       | ✅ Yes         | ✅ Yes          | `~/.config/fish/completions/urlsup.fish`            |
+| PowerShell | ❌ Manual only | ✅ Yes          | Add to `$PROFILE` manually                          |
+| Elvish     | ❌ Manual only | ✅ Yes          | Add to `~/.elvish/rc.elv` manually                  |
 
 **Note**: The `completion-install` command creates directories as needed and handles path resolution automatically. For PowerShell and Elvish, use the manual `completion-generate` command and follow the provided instructions.
 
+## 🧙‍♂️ Configuration Wizard
+
+For new users or complex setups, `urlsup` includes an interactive configuration wizard that guides you through creating optimal configurations:
+
+```bash
+# Run the interactive setup wizard
+$ urlsup config-wizard
+
+🧙‍♂️ urlsup Configuration Wizard
+Let's set up urlsup for your project!
+
+📋 What type of project are you setting up?
+  Documentation Site
+  GitHub Repository
+  Blog/Content Site
+  API Documentation
+  Wiki/Knowledge Base
+  CI/CD Pipeline
+> Custom Setup
+```
+
+**Available Project Templates:**
+
+| Template                | Description                                   | Optimized For                     |
+|-------------------------|-----------------------------------------------|-----------------------------------|
+| **Documentation Site**  | Static site generators (Jekyll, Hugo, Gatsby) | Fast builds, external links       |
+| **GitHub Repository**   | README, contributing guides, documentation    | Community projects, mixed URLs    |
+| **Blog/Content Site**   | WordPress, articles, content management       | External content, social links    |
+| **API Documentation**   | OpenAPI specs, endpoint documentation         | API reliability, auth handling    |
+| **Wiki/Knowledge Base** | Internal wikis, documentation hubs            | Internal links, team wikis        |
+| **CI/CD Pipeline**      | Automated validation in CI                    | Fast execution, strict validation |
+| **Custom Setup**        | Configure everything manually                 | Full control over all settings    |
+
+**Wizard Features:**
+- 📋 **Smart Templates**: Pre-configured settings for common use cases
+- 🎯 **Interactive Filtering**: Set up allowlists and exclusion patterns
+- ⚙️ **Advanced Configuration**: Timeout, retry, and performance tuning
+- 💾 **Automatic Generation**: Creates `.urlsup.toml` with explanatory comments
+- 📚 **Usage Examples**: Shows relevant commands for your configuration
+
+The wizard creates optimized configurations with appropriate defaults for timeouts, retry logic, file types, and failure thresholds based on your project type.
+
 ## ⚙️ Configuration File
 
-`urlsup` supports TOML configuration files for managing complex setups. Place a `.urlsup.toml` file in your project root:
+`urlsup` supports TOML configuration files for managing complex setups. Place a `.urlsup.toml` file in your project root (or use the wizard above to generate one automatically):
 
 ```toml
 # .urlsup.toml - Project configuration for urlsup

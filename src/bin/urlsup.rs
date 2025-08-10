@@ -9,6 +9,7 @@ use urlsup::reporting::{DashboardData, HtmlDashboard};
 use urlsup::ui::ProgressReporter;
 use urlsup::ui::completion::{install_completion, print_completions};
 use urlsup::ui::output;
+use urlsup::ui::wizard::run_configuration_wizard;
 use urlsup::ui::{Cli, Commands, cli_to_config};
 use urlsup::validation::{ValidateUrls, Validator};
 
@@ -18,12 +19,12 @@ use std::path::Path;
 async fn main() {
     let cli = Cli::parse();
 
-    // Handle completion commands first
-    if let Some(exit_code) = handle_completion_commands(&cli) {
+    // Handle special commands first
+    if let Some(exit_code) = handle_special_commands(&cli) {
         std::process::exit(exit_code);
     }
 
-    // Validate that files are provided when not using completions
+    // Validate that files are provided when not using special commands
     if cli.files.is_empty() {
         eprintln!("Error: No files provided");
         eprintln!("\nFor more information, try '--help'.");
@@ -40,8 +41,8 @@ async fn main() {
     }
 }
 
-/// Handle completion commands and return exit code if a completion command was processed
-pub fn handle_completion_commands(cli: &Cli) -> Option<i32> {
+/// Handle special commands and return exit code if a special command was processed
+pub fn handle_special_commands(cli: &Cli) -> Option<i32> {
     match cli.command {
         Some(Commands::CompletionGenerate { shell }) => {
             let mut app = Cli::command();
@@ -55,6 +56,13 @@ pub fn handle_completion_commands(cli: &Cli) -> Option<i32> {
             }
             Err(e) => {
                 eprintln!("Error: {e}");
+                Some(1)
+            }
+        },
+        Some(Commands::ConfigWizard) => match run_configuration_wizard() {
+            Ok(()) => Some(0),
+            Err(e) => {
+                eprintln!("Error running configuration wizard: {e}");
                 Some(1)
             }
         },

@@ -134,6 +134,9 @@ pub enum Commands {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
+    /// Run interactive configuration wizard
+    #[command(name = "config-wizard")]
+    ConfigWizard,
 }
 
 /// Parse command line arguments into CliConfig structure
