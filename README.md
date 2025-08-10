@@ -78,59 +78,60 @@ Using [`awesome_bot`](https://github.com/dkhamsing/awesome_bot) today? Here's a 
 
 ## 🚀 Usage
 ```bash
-CLI to validate URLs in files
+urlsup - CLI to validate URLs in files [version 2.3.0]
 
 Usage: urlsup [OPTIONS] [FILES]... [COMMAND]
 
+Example:
+
+	$ urlsup . --recursive --include md,txt
+
 Commands:
-  completion-generate Generate shell completions
-  completion-install  Install shell completions to standard location
-  config-wizard       Run interactive configuration wizard
-  help                Print this message or the help of the given subcommand(s)
-
-Arguments:
-  [FILES]...  Files or directories to check
-
-Options:
-  -h, --help     Print help
-  -V, --version  Print version
+  completion-generate                Generate shell completions
+  completion-install                 Install shell completions to standard location
+  config-wizard                      Run interactive configuration wizard
+  help                               Print this message or the help of the given subcommand(s)
 
 Core Options:
-  -r, --recursive            Recursively process directories
-  -t, --timeout <SECONDS>    Connection timeout in seconds (default: 30)
-      --concurrency <COUNT>  Concurrent requests (default: CPU cores)
+  -r, --recursive                    Recursively process directories
+  -t, --timeout <SECONDS>            Connection timeout in seconds (default: 5)
+      --concurrency <COUNT>          Concurrent requests (default: CPU cores)
 
 Filtering & Content:
-      --include <EXTENSIONS>     File extensions to process (e.g., md,html,txt)
-      --allowlist <URLS>         URLs to allow (comma-separated)
-      --allow-status <CODES>     Status codes to allow (comma-separated)
-      --exclude-pattern <REGEX>  URL patterns to exclude (regex)
+      --include <EXTENSIONS>         File extensions to process (e.g., md,html,txt)
+      --allowlist <URLS>             URLs to allow (comma-separated)
+      --allow-status <CODES>         Status codes to allow (comma-separated)
+      --exclude-pattern <REGEX>      URL patterns to exclude (regex)
 
 Retry & Rate Limiting:
       --retry <COUNT>                Retry attempts for failed requests (default: 0)
       --retry-delay <MS>             Delay between retries in ms (default: 1000)
       --rate-limit <MS>              Delay between requests in ms (default: 0)
       --allow-timeout                Allow URLs that timeout
-      --failure-threshold <PERCENT>  Fail only if more than X% of URLs are broken (0-100)
+      --failure-threshold <PERCENT>  Fail only if more than X% URLs are broken (0-100)
 
 Output & Verbosity:
-  -q, --quiet            Suppress progress output
-  -v, --verbose          Enable verbose logging
-      --format <FORMAT>  Output format [default: text] [possible values: text, json, minimal]
-      --no-progress      Disable progress bars
+  -q, --quiet                        Suppress progress output
+  -v, --verbose                      Enable verbose logging
+      --format <FORMAT>              Output format [default: text] [text|json|minimal]
+      --no-progress                  Disable progress bars
 
 Network & Security:
-      --user-agent <AGENT>  Custom User-Agent header
-      --proxy <URL>         HTTP/HTTPS proxy URL
-      --insecure            Skip SSL certificate verification
+      --user-agent <AGENT>           Custom User-Agent header
+      --proxy <URL>                  HTTP/HTTPS proxy URL
+      --insecure                     Skip SSL certificate verification
 
 Configuration:
-      --config <FILE>  Use specific config file
-      --no-config      Ignore config files
+      --config <FILE>                Use specific config file
+      --no-config                    Ignore config files
 
 Performance Analysis:
-      --show-performance          Show memory usage and optimization suggestions
-      --html-dashboard <PATH>     Generate HTML dashboard report
+      --show-performance             Show memory usage and optimization suggestions
+      --html-dashboard <PATH>        Generate HTML dashboard report
+
+Options:
+  -h, --help                         Print help
+  -V, --version                      Print version
 ```
 
 ## 📝 Examples

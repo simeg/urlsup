@@ -14,43 +14,43 @@ This guide helps you migrate from [awesome_bot](https://github.com/dkhamsing/awe
 
 ### Basic URL Validation
 
-| awesome_bot | urlsup | Notes |
-|-------------|---------|-------|
-| `awesome_bot README.md` | `urlsup README.md` | Direct replacement |
-| `awesome_bot file1.md file2.md` | `urlsup file1.md file2.md` | Multiple files |
-| `awesome_bot *.md` | `urlsup *.md` | Glob patterns work the same |
+| awesome_bot                     | urlsup                     | Notes                       |
+|---------------------------------|----------------------------|-----------------------------|
+| `awesome_bot README.md`         | `urlsup README.md`         | Direct replacement          |
+| `awesome_bot file1.md file2.md` | `urlsup file1.md file2.md` | Multiple files              |
+| `awesome_bot *.md`              | `urlsup *.md`              | Glob patterns work the same |
 
 ### Directory Processing
 
-| awesome_bot | urlsup | Notes |
-|-------------|---------|-------|
-| `awesome_bot docs/ --recursive` | `urlsup --recursive docs/` | Note flag position |
-| `awesome_bot . -r` | `urlsup --recursive .` | Current directory |
+| awesome_bot                     | urlsup                     | Notes             |
+|---------------------------------|----------------------------|-------------------|
+| `awesome_bot docs/ --recursive` | `urlsup docs/ --recursive` |                   |
+| `awesome_bot . -r`              | `urlsup . -r`              | Current directory |
 
 ### Filtering and Allowlists
 
-| awesome_bot | urlsup | Notes |
-|-------------|---------|-------|
-| `awesome_bot file.md --white-list url1,url2` | `urlsup file.md --allowlist url1,url2` | Renamed for modern terminology |
-| `awesome_bot file.md --allow-dupe` | `urlsup file.md` | Duplicates handled automatically |
-| `awesome_bot file.md --allow 403,500` | `urlsup file.md --allow-status 403,500` | Clearer naming |
+| awesome_bot                                  | urlsup                                  | Notes                            |
+|----------------------------------------------|-----------------------------------------|----------------------------------|
+| `awesome_bot file.md --white-list url1,url2` | `urlsup file.md --allowlist url1,url2`  | Renamed for modern terminology   |
+| `awesome_bot file.md --allow-dupe`           | `urlsup file.md`                        | Duplicates handled automatically |
+| `awesome_bot file.md --allow 403,500`        | `urlsup file.md --allow-status 403,500` | Clearer naming                   |
 
 ### Timeouts and Performance
 
-| awesome_bot | urlsup | Notes |
-|-------------|---------|-------|
-| `awesome_bot file.md --allow-timeout` | `urlsup file.md --allow-timeout` | Same flag |
-| `awesome_bot file.md --set-timeout 30` | `urlsup file.md --timeout 30` | Simplified flag name |
-| No equivalent | `urlsup file.md --concurrency 8` | New: control parallel requests |
-| No equivalent | `urlsup file.md --retry 3 --retry-delay 1000` | New: retry logic |
+| awesome_bot                            | urlsup                                        | Notes                          |
+|----------------------------------------|-----------------------------------------------|--------------------------------|
+| `awesome_bot file.md --allow-timeout`  | `urlsup file.md --allow-timeout`              | Same flag                      |
+| `awesome_bot file.md --set-timeout 30` | `urlsup file.md --timeout 30`                 | Simplified flag name           |
+| No equivalent                          | `urlsup file.md --concurrency 8`              | New: control parallel requests |
+| No equivalent                          | `urlsup file.md --retry 3 --retry-delay 1000` | New: retry logic               |
 
 ### Output Formats
 
-| awesome_bot | urlsup | Notes |
-|-------------|---------|-------|
-| No equivalent | `urlsup file.md --format json` | New: structured JSON output |
-| No equivalent | `urlsup file.md --format minimal` | New: CI-friendly minimal output |
-| Default output | `urlsup file.md --format text` | Enhanced with colors and grouping |
+| awesome_bot    | urlsup                            | Notes                             |
+|----------------|-----------------------------------|-----------------------------------|
+| No equivalent  | `urlsup file.md --format json`    | New: structured JSON output       |
+| No equivalent  | `urlsup file.md --format minimal` | New: CI-friendly minimal output   |
+| Default output | `urlsup file.md --format text`    | Enhanced with colors and grouping |
 
 ## 🔧 Configuration File Migration
 
@@ -105,7 +105,7 @@ awesome_bot docs/ --recursive --allow 403,404 --set-timeout 60
 
 **After (urlsup):**
 ```bash
-urlsup --recursive docs/ --allow-status 403,404 --timeout 60
+urlsup docs/ --recursive --allow-status 403,404 --timeout 60
 ```
 
 ### Example 3: CI/CD Pipeline
@@ -123,7 +123,7 @@ urlsup --recursive docs/ --allow-status 403,404 --timeout 60
 - name: Check URLs
   run: |
     cargo install urlsup
-    urlsup README.md --allow-timeout --allowlist localhost --format minimal
+    urlsup README.md --allow-timeout --allowlist localhost --format text
 ```
 
 Or using the official action:
@@ -250,13 +250,13 @@ echo "Migration complete! Please review and test the changes."
 
 ## 🎯 Performance Comparison
 
-| Metric | awesome_bot | urlsup | Improvement |
-|--------|-------------|---------|-------------|
-| **Speed** | ~50 URLs/minute | ~500+ URLs/minute | **10x faster** |
-| **Memory** | ~100MB for large sets | ~20MB for large sets | **5x more efficient** |
-| **Features** | Basic validation | Rich features + analysis | **Comprehensive** |
-| **Output** | Plain text only | JSON/HTML/Text formats | **Multiple formats** |
-| **CI Integration** | Manual setup | Native support + action | **Better automation** |
+| Metric             | awesome_bot           | urlsup                   | Improvement           |
+|--------------------|-----------------------|--------------------------|-----------------------|
+| **Speed**          | ~50 URLs/minute       | ~500+ URLs/minute        | **10x faster**        |
+| **Memory**         | ~100MB for large sets | ~20MB for large sets     | **5x more efficient** |
+| **Features**       | Basic validation      | Rich features + analysis | **Comprehensive**     |
+| **Output**         | Plain text only       | JSON/HTML/Text formats   | **Multiple formats**  |
+| **CI Integration** | Manual setup          | Native support + action  | **Better automation** |
 
 ## ❓ Common Migration Questions
 
@@ -273,14 +273,14 @@ echo "Migration complete! Please review and test the changes."
 **A:** Yes, just rename `--white-list` to `--allowlist`. The format is identical.
 
 ### Q: What if I have custom awesome_bot modifications?
-**A:** urlsup's configuration system and rich output formats likely provide better alternatives. Contact us for specific use cases.
+**A:** urlsup's configuration system and rich output formats likely provide better alternatives. Contact me for specific use cases.
 
 ## 🆘 Support
 
-- **Documentation**: [Complete usage guide](README.md)
+- **Documentation**: [Complete usage guide](../README.md)
 - **Issues**: [GitHub Issues](https://github.com/simeg/urlsup/issues)
-- **Examples**: [More examples in README](README.md#-examples)
-- **CI Integration**: [GitHub Actions guide](README.md#-github-actions)
+- **Examples**: [More examples in README](../README.md#-examples)
+- **CI Integration**: [GitHub Actions guide](../README.md#-github-actions)
 
 ## 📈 Next Steps
 
