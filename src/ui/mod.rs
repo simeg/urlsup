@@ -9,6 +9,7 @@ pub mod color;
 pub mod completion;
 pub mod output;
 pub mod progress;
+pub mod rich;
 pub mod theme;
 pub mod wizard;
 
