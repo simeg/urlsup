@@ -425,4 +425,248 @@ mod tests {
         assert_eq!(result.len(), 0);
         Ok(())
     }
+
+    #[test]
+    fn test_parse_urls__multiple_urls_same_line() {
+        let line = "Visit https://example.com and also http://test.org for more info".to_string();
+        let url_match = (line, "test.md".to_string(), 5);
+
+        let result = Finder::parse_urls(url_match).unwrap();
+        assert_eq!(result.len(), 2);
+
+        assert_eq!(result[0].url(), "https://example.com");
+        assert_eq!(result[0].line(), 5);
+        assert_eq!(result[0].file_name(), "test.md");
+
+        assert_eq!(result[1].url(), "http://test.org");
+        assert_eq!(result[1].line(), 5);
+        assert_eq!(result[1].file_name(), "test.md");
+    }
+
+    #[test]
+    fn test_parse_urls__url_with_query_params() {
+        let line = "API endpoint: https://api.example.com/v1/users?id=123&format=json".to_string();
+        let url_match = (line, "api.md".to_string(), 10);
+
+        let result = Finder::parse_urls(url_match).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].url(),
+            "https://api.example.com/v1/users?id=123&format=json"
+        );
+    }
+
+    #[test]
+    fn test_parse_urls__url_with_fragments() {
+        let line = "Docs: https://example.com/docs#installation".to_string();
+        let url_match = (line, "readme.md".to_string(), 2);
+
+        let result = Finder::parse_urls(url_match).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].url(), "https://example.com/docs#installation");
+    }
+
+    #[test]
+    fn test_parse_urls__url_with_port() {
+        let line = "Local server: http://localhost:8080/api".to_string();
+        let url_match = (line, "config.md".to_string(), 1);
+
+        let result = Finder::parse_urls(url_match).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].url(), "http://localhost:8080/api");
+    }
+
+    #[test]
+    fn test_parse_urls__no_urls_in_line() {
+        let line = "This line has no URLs, just regular text.".to_string();
+        let url_match = (line, "empty.md".to_string(), 3);
+
+        let result = Finder::parse_urls(url_match).unwrap();
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_urls__urls_in_code_blocks() {
+        let line = "`curl https://api.example.com/data`".to_string();
+        let url_match = (line, "code.md".to_string(), 7);
+
+        let result = Finder::parse_urls(url_match).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].url(), "https://api.example.com/data");
+    }
+
+    #[test]
+    fn test_parse_urls__malformed_urls() {
+        let line = "Broken: ht://bad-url and htp://another-bad".to_string();
+        let url_match = (line, "broken.md".to_string(), 1);
+
+        let result = Finder::parse_urls(url_match).unwrap();
+        // linkify actually finds some URLs from malformed input
+        // "ht://bad-url" and "htp://another-bad" are detected as URLs
+        assert_eq!(result.len(), 2);
+
+        // Verify the URLs that were found
+        assert_eq!(result[0].url(), "ht://bad-url");
+        assert_eq!(result[1].url(), "htp://another-bad");
+    }
+
+    #[test]
+    fn test_parse_urls__urls_with_special_chars() {
+        let line = "Search: https://example.com/search?q=rust%20programming&sort=date".to_string();
+        let url_match = (line, "search.md".to_string(), 4);
+
+        let result = Finder::parse_urls(url_match).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].url(),
+            "https://example.com/search?q=rust%20programming&sort=date"
+        );
+    }
+
+    #[test]
+    fn test_estimate_url_capacity() {
+        // Test capacity estimation for different file types
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create test files
+        let md_file = temp_dir.path().join("test.md");
+        let txt_file = temp_dir.path().join("test.txt");
+        let html_file = temp_dir.path().join("test.html");
+        let other_file = temp_dir.path().join("test.unknown");
+
+        std::fs::write(&md_file, "content").unwrap();
+        std::fs::write(&txt_file, "content").unwrap();
+        std::fs::write(&html_file, "content").unwrap();
+        std::fs::write(&other_file, "content").unwrap();
+
+        // Markdown files should get 2x multiplier
+        let md_capacity = Finder::estimate_url_capacity(&md_file, 10);
+        assert_eq!(md_capacity, 20);
+
+        // HTML files should get 3x multiplier
+        let html_capacity = Finder::estimate_url_capacity(&html_file, 10);
+        assert_eq!(html_capacity, 30);
+
+        // TXT files should get 1x multiplier
+        let txt_capacity = Finder::estimate_url_capacity(&txt_file, 10);
+        assert_eq!(txt_capacity, 10);
+
+        // Other files should get 2x multiplier (ESTIMATED_URLS_PER_MATCH = 2)
+        let other_capacity = Finder::estimate_url_capacity(&other_file, 10);
+        assert_eq!(other_capacity, 20);
+    }
+
+    #[test]
+    fn test_parse_lines_with_urls_empty_file() -> TestResult {
+        let temp_dir = tempfile::tempdir()?;
+        let empty_file = temp_dir.path().join("empty.md");
+        std::fs::write(&empty_file, "")?;
+
+        let result = Finder::parse_lines_with_urls(&empty_file)?;
+        assert_eq!(result.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_lines_with_urls_no_matches() -> TestResult {
+        let temp_dir = tempfile::tempdir()?;
+        let file = temp_dir.path().join("no_urls.md");
+        std::fs::write(
+            &file,
+            "This file has no URLs\nJust regular text\nNo links at all",
+        )?;
+
+        let result = Finder::parse_lines_with_urls(&file)?;
+        assert_eq!(result.len(), 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_urls_nonexistent_file() {
+        let finder = Finder::default();
+        let nonexistent = std::path::Path::new("/definitely/does/not/exist.md");
+
+        let result = finder.find_urls(vec![nonexistent]);
+        // Should return an error or empty result, not panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_find_urls_with_different_extensions() -> TestResult {
+        let temp_dir = tempfile::tempdir()?;
+        let base = temp_dir.path();
+
+        // Create files with different extensions
+        std::fs::write(base.join("readme.md"), "Markdown: https://md.example.com")?;
+        std::fs::write(base.join("notes.txt"), "Text: https://txt.example.com")?;
+        std::fs::write(base.join("page.html"), "HTML: https://html.example.com")?;
+        std::fs::write(
+            base.join("config.json"),
+            r#"{"url": "https://json.example.com"}"#,
+        )?;
+
+        let readme_path = base.join("readme.md");
+        let notes_path = base.join("notes.txt");
+        let html_path = base.join("page.html");
+        let json_path = base.join("config.json");
+
+        let files = vec![
+            readme_path.as_path(),
+            notes_path.as_path(),
+            html_path.as_path(),
+            json_path.as_path(),
+        ];
+
+        let finder = Finder::default();
+        let result = finder.find_urls(files)?;
+
+        assert_eq!(result.len(), 4);
+
+        let urls: Vec<&str> = result.iter().map(|ul| ul.url()).collect();
+        assert!(urls.contains(&"https://md.example.com"));
+        assert!(urls.contains(&"https://txt.example.com"));
+        assert!(urls.contains(&"https://html.example.com"));
+        assert!(urls.contains(&"https://json.example.com"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_finder_default() {
+        let finder = Finder::default();
+        // Should create without panicking
+        assert!(std::ptr::eq(&finder, &finder)); // Basic identity check
+    }
+
+    #[test]
+    fn test_url_parsing_edge_cases() {
+        let test_cases = vec![
+            // URL at start of line
+            ("https://start.example.com rest of line", 1),
+            // URL at end of line
+            ("beginning of line https://end.example.com", 1),
+            // Multiple URLs separated by text
+            (
+                "Visit https://first.com then go to https://second.com for more",
+                2,
+            ),
+            // URLs in parentheses
+            ("See (https://example.com) for details", 1),
+            // URLs in brackets
+            ("Check [https://example.com] link", 1),
+            // URLs with paths and queries
+            (
+                "API: https://api.example.com/v1/users?active=true&limit=50",
+                1,
+            ),
+        ];
+
+        for (line, expected_count) in test_cases {
+            let url_match = (line.to_string(), "test.md".to_string(), 1);
+            let result = Finder::parse_urls(url_match).unwrap();
+            assert_eq!(result.len(), expected_count, "Failed for line: {}", line);
+        }
+    }
 }

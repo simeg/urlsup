@@ -384,4 +384,420 @@ mod tests {
         let report = profiler.generate_report();
         assert!(!report.recommendations.is_empty());
     }
+
+    #[test]
+    fn test_benchmark_result_throughput() {
+        // Test normal throughput calculation
+        let result = BenchmarkResult {
+            operation: "test".to_string(),
+            duration: Duration::from_secs(2),
+            items_processed: 100,
+            memory_used: 1024,
+            cpu_usage: 50.0,
+        };
+        assert_eq!(result.throughput(), 50.0);
+
+        // Test zero duration edge case
+        let result_zero = BenchmarkResult {
+            operation: "instant".to_string(),
+            duration: Duration::from_millis(0),
+            items_processed: 100,
+            memory_used: 1024,
+            cpu_usage: 50.0,
+        };
+        assert_eq!(result_zero.throughput(), 0.0);
+
+        // Test fractional second duration
+        let result_sub_sec = BenchmarkResult {
+            operation: "fast".to_string(),
+            duration: Duration::from_millis(500),
+            items_processed: 50,
+            memory_used: 512,
+            cpu_usage: 25.0,
+        };
+        assert_eq!(result_sub_sec.throughput(), 100.0);
+    }
+
+    #[test]
+    fn test_benchmark_result_operation_type_detection() {
+        let validation_result = BenchmarkResult {
+            operation: "url_validation".to_string(),
+            duration: Duration::from_secs(1),
+            items_processed: 100,
+            memory_used: 1024,
+            cpu_usage: 50.0,
+        };
+        assert!(validation_result.is_validation());
+        assert!(!validation_result.is_file_processing());
+
+        let file_result = BenchmarkResult {
+            operation: "file_processing".to_string(),
+            duration: Duration::from_secs(1),
+            items_processed: 50,
+            memory_used: 2048,
+            cpu_usage: 60.0,
+        };
+        assert!(!file_result.is_validation());
+        assert!(file_result.is_file_processing());
+
+        let other_result = BenchmarkResult {
+            operation: "other_task".to_string(),
+            duration: Duration::from_secs(1),
+            items_processed: 25,
+            memory_used: 512,
+            cpu_usage: 30.0,
+        };
+        assert!(!other_result.is_validation());
+        assert!(!other_result.is_file_processing());
+    }
+
+    #[test]
+    fn test_performance_report_with_no_operations() {
+        let memory_samples = vec![1024, 2048, 1536];
+        let cpu_samples = vec![10.0, 20.0, 15.0];
+
+        let report = PerformanceReport::new(
+            Duration::from_secs(5),
+            vec![],
+            &memory_samples,
+            &cpu_samples,
+        );
+
+        assert_eq!(report.operations.len(), 0);
+        assert_eq!(report.peak_memory_mb, 2048.0 / BYTES_PER_MB);
+        assert_eq!(report.avg_cpu_usage, 15.0);
+        assert_eq!(report.total_duration, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_performance_report_with_empty_samples() {
+        let operations = vec![BenchmarkResult {
+            operation: "test".to_string(),
+            duration: Duration::from_secs(1),
+            items_processed: 100,
+            memory_used: 1024,
+            cpu_usage: 50.0,
+        }];
+
+        let report = PerformanceReport::new(
+            Duration::from_secs(2),
+            operations,
+            &[], // Empty memory samples
+            &[], // Empty CPU samples
+        );
+
+        assert_eq!(report.operations.len(), 1);
+        assert_eq!(report.peak_memory_mb, 0.0);
+        assert_eq!(report.avg_cpu_usage, 0.0);
+    }
+
+    #[test]
+    fn test_performance_report_recommendations_high_memory() {
+        let operations = vec![BenchmarkResult {
+            operation: "memory_intensive".to_string(),
+            duration: Duration::from_secs(1),
+            items_processed: 100,
+            memory_used: (thresholds::HIGH_MEMORY_MB * BYTES_PER_MB * 1.5) as u64,
+            cpu_usage: 50.0,
+        }];
+
+        let memory_samples = vec![(thresholds::HIGH_MEMORY_MB * BYTES_PER_MB * 1.5) as u64];
+        let cpu_samples = vec![50.0];
+
+        let report = PerformanceReport::new(
+            Duration::from_secs(1),
+            operations,
+            &memory_samples,
+            &cpu_samples,
+        );
+
+        let recommendations_text = report.recommendations.join(" ");
+        assert!(recommendations_text.to_lowercase().contains("memory"));
+    }
+
+    #[test]
+    fn test_performance_report_recommendations_very_high_memory() {
+        let memory_samples = vec![(thresholds::VERY_HIGH_MEMORY_MB * BYTES_PER_MB * 1.2) as u64];
+        let cpu_samples = vec![50.0];
+
+        let report = PerformanceReport::new(
+            Duration::from_secs(1),
+            vec![],
+            &memory_samples,
+            &cpu_samples,
+        );
+
+        let recommendations_text = report.recommendations.join(" ");
+        assert!(recommendations_text.to_lowercase().contains("memory"));
+    }
+
+    #[test]
+    fn test_performance_report_recommendations_low_cpu() {
+        let operations = vec![BenchmarkResult {
+            operation: "cpu_light".to_string(),
+            duration: Duration::from_secs(1),
+            items_processed: 100,
+            memory_used: 1024,
+            cpu_usage: thresholds::LOW_CPU_USAGE_PERCENT - 10.0,
+        }];
+
+        let memory_samples = vec![1024];
+        let cpu_samples = vec![thresholds::LOW_CPU_USAGE_PERCENT - 10.0];
+
+        let report = PerformanceReport::new(
+            Duration::from_secs(1),
+            operations,
+            &memory_samples,
+            &cpu_samples,
+        );
+
+        let recommendations_text = report.recommendations.join(" ");
+        assert!(
+            recommendations_text.to_lowercase().contains("concurrency")
+                || recommendations_text.to_lowercase().contains("cpu")
+        );
+    }
+
+    #[test]
+    fn test_performance_report_recommendations_slow_validation() {
+        let operations = vec![BenchmarkResult {
+            operation: "validation".to_string(),
+            duration: Duration::from_secs(10),
+            items_processed: (thresholds::SLOW_VALIDATION_ITEMS_PER_SEC * 5.0) as usize, // 5 items/sec
+            memory_used: 1024,
+            cpu_usage: 50.0,
+        }];
+
+        let memory_samples = vec![1024];
+        let cpu_samples = vec![50.0];
+
+        let report = PerformanceReport::new(
+            Duration::from_secs(10),
+            operations,
+            &memory_samples,
+            &cpu_samples,
+        );
+
+        let recommendations_text = report.recommendations.join(" ");
+        assert!(
+            recommendations_text.to_lowercase().contains("validation")
+                || recommendations_text.to_lowercase().contains("timeout")
+        );
+    }
+
+    #[test]
+    fn test_performance_report_recommendations_slow_file_processing() {
+        let operations = vec![BenchmarkResult {
+            operation: "file_processing".to_string(),
+            duration: Duration::from_secs(10),
+            items_processed: (thresholds::SLOW_FILE_PROCESSING_ITEMS_PER_SEC * 5.0) as usize, // 50 items/sec
+            memory_used: 1024,
+            cpu_usage: 50.0,
+        }];
+
+        let memory_samples = vec![1024];
+        let cpu_samples = vec![50.0];
+
+        let report = PerformanceReport::new(
+            Duration::from_secs(10),
+            operations,
+            &memory_samples,
+            &cpu_samples,
+        );
+
+        let recommendations_text = report.recommendations.join(" ");
+        assert!(
+            recommendations_text.to_lowercase().contains("file")
+                || recommendations_text.to_lowercase().contains("ssd")
+        );
+    }
+
+    #[test]
+    fn test_performance_report_recommendations_long_processing() {
+        let operations = vec![BenchmarkResult {
+            operation: "long_task".to_string(),
+            duration: thresholds::LONG_PROCESSING_TIME + Duration::from_secs(10),
+            items_processed: 1000,
+            memory_used: 1024,
+            cpu_usage: 50.0,
+        }];
+
+        let memory_samples = vec![1024];
+        let cpu_samples = vec![50.0];
+
+        let report = PerformanceReport::new(
+            thresholds::LONG_PROCESSING_TIME + Duration::from_secs(10),
+            operations,
+            &memory_samples,
+            &cpu_samples,
+        );
+
+        let recommendations_text = report.recommendations.join(" ");
+        assert!(
+            recommendations_text.to_lowercase().contains("time")
+                || recommendations_text.to_lowercase().contains("processing")
+        );
+    }
+
+    #[test]
+    fn test_performance_profiler_default() {
+        let profiler = PerformanceProfiler::default();
+        assert_eq!(profiler.benchmarks.len(), 0);
+        assert_eq!(profiler.memory_samples.len(), 0);
+        assert_eq!(profiler.cpu_samples.len(), 0);
+    }
+
+    #[test]
+    fn test_performance_profiler_multiple_operations() {
+        let mut profiler = PerformanceProfiler::new();
+
+        // Add multiple operations
+        let timer1 = profiler.start_operation("operation_1");
+        thread::sleep(Duration::from_millis(5));
+        profiler.finish_operation(timer1, 50);
+
+        let timer2 = profiler.start_operation("operation_2");
+        thread::sleep(Duration::from_millis(5));
+        profiler.finish_operation(timer2, 75);
+
+        let report = profiler.generate_report();
+        assert_eq!(report.operations.len(), 2);
+        assert_eq!(report.operations[0].operation, "operation_1");
+        assert_eq!(report.operations[0].items_processed, 50);
+        assert_eq!(report.operations[1].operation, "operation_2");
+        assert_eq!(report.operations[1].items_processed, 75);
+
+        // Should have collected memory and CPU samples
+        assert_eq!(profiler.memory_samples.len(), 2);
+        assert_eq!(profiler.cpu_samples.len(), 2);
+    }
+
+    #[test]
+    fn test_operation_timer() {
+        let timer = OperationTimer::new("test_timer");
+        assert_eq!(timer.operation, "test_timer");
+
+        thread::sleep(Duration::from_millis(10));
+        let result = timer.finish(100);
+
+        assert_eq!(result.operation, "test_timer");
+        assert!(result.duration >= Duration::from_millis(8)); // Allow some variance
+        assert!(result.duration <= Duration::from_millis(50)); // But not too much
+    }
+
+    #[test]
+    fn test_system_metrics_collection() {
+        let profiler = PerformanceProfiler::new();
+        let metrics = profiler.get_system_metrics();
+
+        // Memory is u64 so always non-negative, CPU should be non-negative
+        assert!(metrics.cpu_usage >= 0.0);
+        // Just verify memory_used is accessible
+        let _ = metrics.memory_used;
+    }
+
+    #[test]
+    fn test_performance_profiler_memory_and_cpu_usage() {
+        let profiler = PerformanceProfiler::new();
+
+        // These methods should not panic and return reasonable values
+        let memory = profiler.get_memory_usage();
+        let cpu = profiler.get_cpu_usage();
+
+        // Memory is u64 so always non-negative, just verify it's accessible
+        let _ = memory;
+        assert!(cpu >= 0.0);
+        assert!(cpu <= 100.0 * num_cpus::get() as f32); // CPU can exceed 100% on multi-core
+    }
+
+    #[test]
+    fn test_display_performance_summary() {
+        let mut profiler = PerformanceProfiler::new();
+
+        // Add some test data
+        let timer = profiler.start_operation("test_display");
+        thread::sleep(Duration::from_millis(5));
+        profiler.finish_operation(timer, 42);
+
+        // This should not panic
+        profiler.display_performance_summary();
+    }
+
+    #[test]
+    fn test_benchmark_result_clone_and_debug() {
+        let original = BenchmarkResult {
+            operation: "clone_test".to_string(),
+            duration: Duration::from_secs(1),
+            items_processed: 100,
+            memory_used: 1024,
+            cpu_usage: 50.0,
+        };
+
+        let cloned = original.clone();
+        assert_eq!(original.operation, cloned.operation);
+        assert_eq!(original.duration, cloned.duration);
+        assert_eq!(original.items_processed, cloned.items_processed);
+        assert_eq!(original.memory_used, cloned.memory_used);
+        assert_eq!(original.cpu_usage, cloned.cpu_usage);
+
+        // Test debug formatting
+        let debug_str = format!("{:?}", original);
+        assert!(debug_str.contains("clone_test"));
+        assert!(debug_str.contains("100"));
+    }
+
+    #[test]
+    fn test_performance_report_clone_and_debug() {
+        let operations = vec![BenchmarkResult {
+            operation: "test".to_string(),
+            duration: Duration::from_secs(1),
+            items_processed: 100,
+            memory_used: 1024,
+            cpu_usage: 50.0,
+        }];
+
+        let original = PerformanceReport::new(
+            Duration::from_secs(5),
+            operations,
+            &[1024, 2048],
+            &[25.0, 75.0],
+        );
+
+        let cloned = original.clone();
+        assert_eq!(original.total_duration, cloned.total_duration);
+        assert_eq!(original.operations.len(), cloned.operations.len());
+        assert_eq!(original.peak_memory_mb, cloned.peak_memory_mb);
+        assert_eq!(original.avg_cpu_usage, cloned.avg_cpu_usage);
+
+        // Test debug formatting
+        let debug_str = format!("{:?}", original);
+        assert!(debug_str.contains("PerformanceReport"));
+    }
+
+    #[test]
+    fn test_system_metrics_debug() {
+        let metrics = SystemMetrics {
+            memory_used: 1024,
+            cpu_usage: 50.0,
+        };
+
+        let debug_str = format!("{:?}", metrics);
+        assert!(debug_str.contains("SystemMetrics"));
+        assert!(debug_str.contains("1024"));
+        assert!(debug_str.contains("50"));
+
+        let cloned = metrics.clone();
+        assert_eq!(metrics.memory_used, cloned.memory_used);
+        assert_eq!(metrics.cpu_usage, cloned.cpu_usage);
+    }
+
+    #[test]
+    fn test_performance_constants() {
+        // Test that the thresholds are reasonable at runtime
+        // These compile-time constant checks are removed to avoid clippy warnings
+        assert!(thresholds::LONG_PROCESSING_TIME > Duration::from_secs(0));
+
+        // BYTES_PER_MB should be correct
+        assert_eq!(BYTES_PER_MB, 1_048_576.0);
+    }
 }
