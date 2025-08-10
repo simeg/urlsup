@@ -7,6 +7,7 @@
 use once_cell::sync::Lazy;
 use std::env;
 use std::fmt;
+use std::io::IsTerminal;
 use std::str::FromStr;
 
 use crate::ui::color::Colors;
@@ -355,7 +356,7 @@ pub fn get_terminal_info() -> TerminalInfo {
         colorfgbg: env::var("COLORFGBG").ok(),
         force_color: env::var("FORCE_COLOR").ok(),
         no_color: env::var("NO_COLOR").is_ok(),
-        is_tty: atty::is(atty::Stream::Stdout),
+        is_tty: std::io::stdout().is_terminal(),
     }
 }
 

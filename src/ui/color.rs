@@ -40,6 +40,7 @@ pub fn colorize(text: &str, color: &str) -> String {
 /// Enhanced terminal capability detection
 pub fn supports_formatting() -> bool {
     use std::env;
+    use std::io::IsTerminal;
 
     // Check if colors/emojis are explicitly disabled
     if env::var("NO_COLOR").is_ok() || env::var("FORCE_COLOR").as_deref() == Ok("0") {
@@ -57,7 +58,7 @@ pub fn supports_formatting() -> bool {
     }
 
     // Check if output is being redirected
-    if !atty::is(atty::Stream::Stdout) {
+    if !std::io::stdout().is_terminal() {
         return false;
     }
 
