@@ -18,7 +18,7 @@ pub struct Cli {
     #[arg(short = 'r', long, help_heading = "Core Options")]
     pub recursive: bool,
 
-    /// Connection timeout in seconds (default: 30)
+    /// Connection timeout in seconds (default: 5)
     #[arg(
         short = 't',
         long,
@@ -65,7 +65,7 @@ pub struct Cli {
     #[arg(long, help_heading = "Retry & Rate Limiting")]
     pub allow_timeout: bool,
 
-    /// Fail only if more than X% of URLs are broken (0-100)
+    /// Fail only if more than X% URLs are broken (0-100)
     #[arg(long, value_name = "PERCENT", help_heading = "Retry & Rate Limiting")]
     pub failure_threshold: Option<f64>,
 
@@ -743,7 +743,7 @@ mod tests {
     fn test_validate_cli_args_valid() {
         let mut cli = create_default_cli();
         cli.files = vec!["test.md".to_string()];
-        cli.timeout = Some(30);
+        cli.timeout = Some(5);
         cli.concurrency = Some(4);
         cli.allow_status = Some("200,404".to_string());
         cli.failure_threshold = Some(10.0);

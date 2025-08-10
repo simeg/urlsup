@@ -605,7 +605,7 @@ mod tests {
         assert!(result.is_ok());
         let config = result.unwrap();
         // Should be default config since no_config is true
-        assert_eq!(config.timeout, Some(30)); // Default timeout is 30
+        assert_eq!(config.timeout, Some(5)); // Default timeout is 5
     }
 
     #[test]

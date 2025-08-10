@@ -139,7 +139,7 @@ mod tests {
     fn test_log_config_info_all_params() {
         // Test with various parameter combinations
         let config1 = Config {
-            timeout: Some(30),
+            timeout: Some(5),
             allow_timeout: Some(false),
             retry_attempts: Some(3),
             retry_delay: Some(1000),

@@ -39,7 +39,7 @@ pub mod http_status {
 /// Timeout and duration constants
 pub mod timeouts {
     /// Default connection timeout in seconds
-    pub const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
+    pub const DEFAULT_TIMEOUT_SECONDS: u64 = 5;
     /// Maximum reasonable timeout in seconds (1 hour)
     pub const MAX_TIMEOUT_SECONDS: u64 = 3600;
     /// Minimum timeout in seconds
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_timeout_constants() {
-        assert_eq!(timeouts::DEFAULT_TIMEOUT_SECONDS, 30);
+        assert_eq!(timeouts::DEFAULT_TIMEOUT_SECONDS, 5);
         assert_eq!(timeouts::MAX_TIMEOUT_SECONDS, 3600);
         assert_eq!(timeouts::MIN_TIMEOUT_SECONDS, 1);
     }

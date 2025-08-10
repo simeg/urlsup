@@ -83,7 +83,7 @@ pub fn get_project_templates() -> Vec<ProjectTemplate> {
             name: "Documentation Site",
             description: "Static site generators (Jekyll, Hugo, Gatsby, etc.)",
             config: Config {
-                timeout: Some(30),
+                timeout: Some(5),
                 allow_timeout: Some(false),
                 retry_attempts: Some(2),
                 retry_delay: Some(1000),
@@ -143,7 +143,7 @@ pub fn get_project_templates() -> Vec<ProjectTemplate> {
             name: "Wiki/Knowledge Base",
             description: "Internal wikis, knowledge bases, documentation hubs",
             config: Config {
-                timeout: Some(30),
+                timeout: Some(5),
                 allow_timeout: Some(true),
                 retry_attempts: Some(3),
                 retry_delay: Some(1000),
@@ -391,7 +391,7 @@ impl ConfigurationWizard {
         // Timeout
         let timeout: u64 = Input::with_theme(&self.theme)
             .with_prompt("Connection timeout (seconds)")
-            .default(config.timeout.unwrap_or(30))
+            .default(config.timeout.unwrap_or(5))
             .interact()?;
         config.timeout = Some(timeout);
 
@@ -807,7 +807,7 @@ mod tests {
     #[test]
     fn test_generate_config_file_basic() {
         let config = Config {
-            timeout: Some(30),
+            timeout: Some(5),
             allow_timeout: Some(true),
             ..Config::default()
         };
@@ -816,7 +816,7 @@ mod tests {
         let generator = ConfigFileGenerator::new(&config, &file_types);
         let content = generator.generate().unwrap();
 
-        assert!(content.contains("timeout = 30"));
+        assert!(content.contains("timeout = 5"));
         assert!(content.contains("allow_timeout = true"));
         assert!(content.contains(r#"file_types = ["md", "txt"]"#));
     }

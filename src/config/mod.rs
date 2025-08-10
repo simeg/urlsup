@@ -76,7 +76,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            timeout: Some(30),
+            timeout: Some(timeouts::DEFAULT_TIMEOUT_SECONDS),
             threads: None, // Will default to CPU core count
             allow_timeout: Some(false),
             file_types: None,
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
-        assert_eq!(config.timeout, Some(30));
+        assert_eq!(config.timeout, Some(timeouts::DEFAULT_TIMEOUT_SECONDS));
         assert_eq!(config.allow_timeout, Some(false));
         assert_eq!(config.retry_attempts, Some(0));
         assert_eq!(
@@ -502,7 +502,10 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(default_config.timeout_duration(), Duration::from_secs(30));
+        assert_eq!(
+            default_config.timeout_duration(),
+            Duration::from_secs(timeouts::DEFAULT_TIMEOUT_SECONDS)
+        );
     }
 
     #[test]
@@ -553,7 +556,7 @@ mod tests {
         // This test ensures that the function doesn't panic even if no config file exists
         let config = Config::load_from_standard_locations();
         // Should fall back to defaults
-        assert_eq!(config.timeout, Some(30));
+        assert_eq!(config.timeout, Some(timeouts::DEFAULT_TIMEOUT_SECONDS));
         assert_eq!(config.allow_timeout, Some(false));
     }
 
@@ -723,7 +726,7 @@ mod tests {
     #[test]
     fn test_config_validation_valid_config() -> Result<()> {
         let config = Config {
-            timeout: Some(30),
+            timeout: Some(timeouts::DEFAULT_TIMEOUT_SECONDS),
             threads: Some(4),
             retry_attempts: Some(3),
             allowed_status_codes: Some(vec![200, 404, 429]),
@@ -768,14 +771,14 @@ mod tests {
         };
 
         let cli_config = CliConfig {
-            timeout: Some(30),
+            timeout: Some(timeouts::DEFAULT_TIMEOUT_SECONDS),
             verbose: true,
             ..Default::default()
         };
 
         config.merge_with_cli(&cli_config);
 
-        assert_eq!(config.timeout, Some(30)); // Overwritten
+        assert_eq!(config.timeout, Some(timeouts::DEFAULT_TIMEOUT_SECONDS)); // Overwritten
         assert_eq!(config.verbose, Some(true)); // Overwritten
     }
 
@@ -788,14 +791,14 @@ mod tests {
         };
 
         let cli_config = CliConfig {
-            timeout: Some(30),
+            timeout: Some(timeouts::DEFAULT_TIMEOUT_SECONDS),
             // threads not set in CLI
             ..Default::default()
         };
 
         config.merge_with_cli(&cli_config);
 
-        assert_eq!(config.timeout, Some(30)); // Overwritten
+        assert_eq!(config.timeout, Some(timeouts::DEFAULT_TIMEOUT_SECONDS)); // Overwritten
         assert_eq!(config.threads, Some(4)); // Preserved
     }
 }

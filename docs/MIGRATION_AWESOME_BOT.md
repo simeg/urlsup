@@ -62,7 +62,7 @@ awesome_bot doesn't have configuration files, but urlsup supports `.urlsup.toml`
 # .urlsup.toml - Replace command-line flags with persistent config
 
 # Basic settings
-timeout = 30
+timeout = 5
 allow_timeout = false
 threads = 8  # Replaces --concurrency
 

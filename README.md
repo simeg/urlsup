@@ -366,7 +366,7 @@ The wizard creates optimized configurations with appropriate defaults for timeou
 
 ```toml
 # .urlsup.toml - Project configuration for urlsup
-timeout = 30
+timeout = 5
 threads = 8  # Number of concurrent threads (maps to --concurrency CLI option)
 allow_timeout = false
 file_types = ["md", "html", "txt"]
