@@ -26,7 +26,7 @@ Commands:
   help                               Print this message or the help of the given subcommand(s)
 
 Core Options:
-  -r, --recursive                    Recursively process directories
+  -r, --recursive                    Recursively process directories. Will skip files/directories listed in .gitignore
   -t, --timeout <SECONDS>            Connection timeout in seconds (default: 5)
       --concurrency <COUNT>          Concurrent requests (default: CPU cores)
 

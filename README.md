@@ -93,7 +93,7 @@ Commands:
   help                               Print this message or the help of the given subcommand(s)
 
 Core Options:
-  -r, --recursive                    Recursively process directories
+  -r, --recursive                    Recursively process directories. Will skip files/directories listed in .gitignore
   -t, --timeout <SECONDS>            Connection timeout in seconds (default: 5)
       --concurrency <COUNT>          Concurrent requests (default: CPU cores)
 
@@ -153,7 +153,7 @@ $ urlsup docs/*.md
 **Important**: `urlsup` treats files and directories differently:
 
 - **Files**: Directly processed (e.g., `urlsup README.md`)
-- **Directories**: Must use `--recursive` flag (e.g., `urlsup --recursive docs/`)
+- **Directories**: Must use `--recursive` flag (e.g., `urlsup --recursive docs/`). Will skip files/directories listed in .gitignore.
 
 ```bash
 # ❌ This will fail with an error
@@ -166,7 +166,7 @@ $ urlsup --recursive docs/
 # ✅ Process only specific file types
 $ urlsup --recursive --include md,txt docs/
 
-# ✅ Process current directory recursively
+# ✅ Process current directory recursively (will skip files/directories listed in .gitignore)
 $ urlsup --recursive .
 ```
 
