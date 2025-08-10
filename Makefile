@@ -1,4 +1,4 @@
-.PHONY: audit build check ci clippy coverage fmt generate_test_links help install link lint publish release test
+.PHONY: audit build check ci clippy coverage fmt generate_test_links help install lint publish release test
 
 BIN_NAME  = urlsup
 CARGO     = $(shell which cargo)
@@ -51,9 +51,6 @@ generate_test_links: ## Generate test directory structure with sample URLs
 install: ## Install urlsup to cargo bin directory
 	@$(CARGO) install --path .
 
-link: ## Create symlink to debug binary for local testing
-	@ln -sf ./target/debug/$(BIN_NAME) .
-
 lint: ## Check code formatting
 	@$(CARGO) fmt --all -- --check
 
@@ -64,4 +61,4 @@ release: ## Build optimized release version
 	@$(CARGO) build --release
 
 test: ## Run all tests with output
-	@$(CARGO) test -- --nocapture
+	@RUST_LOG=error,urlsup=debug $(CARGO) test -- --nocapture
