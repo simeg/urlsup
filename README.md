@@ -56,6 +56,7 @@ Using [`awesome_bot`](https://github.com/dkhamsing/awesome_bot) today? Here's a 
 - [📦 Installation](#-installation)
 - [🚀 Shell Completions Installation](#-shell-completions-installation)
 - [🧙‍♂️ Configuration Wizard](#-configuration-wizard)
+- [⚙️ Configuration File](#-configuration-file)
   - [Configuration Discovery](#configuration-discovery)
 - [🔧 Advanced Features](#-advanced-features)
   - [🎯 Failure Threshold](#-failure-threshold)
@@ -73,7 +74,7 @@ Using [`awesome_bot`](https://github.com/dkhamsing/awesome_bot) today? Here's a 
 - [⚡ Browser-like HTTP Client](#-browser-like-http-client)
 - [🚨 Error Handling](#-error-handling)
 - [🔄 GitHub Actions](#-github-actions)
-- [🛠️ Development](#️-development)
+- [🛠️ Development](#-development)
 
 ## 🚀 Usage
 ```bash
@@ -567,11 +568,11 @@ $ urlsup --format json docs/ | jq -r '.issues[] | [.file, .line, .url, .status_c
 
 #### Output Format Comparison
 
-| Format | Colors/Emojis | Config Info | URL List | Progress Bars | Issue Grouping | Use Case |
-|--------|---------------|-------------|----------|---------------|----------------|----------|
-| `text` | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes | Interactive use |
-| `json` | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | Automation/scripts |
-| `minimal` | ❌ No | ❌ No | ❌ No | ❌ No | ❌ No | Simple scripts/CI |
+| Format    | Colors/Emojis | Config Info | URL List | Progress Bars | Issue Grouping | Use Case           |
+|-----------|---------------|-------------|----------|---------------|----------------|--------------------|
+| `text`    | ✅ Yes         | ✅ Yes       | ✅ Yes    | ✅ Yes         | ✅ Yes          | Interactive use    |
+| `json`    | ❌ No          | ❌ No        | ❌ No     | ❌ No          | ❌ No           | Automation/scripts |
+| `minimal` | ❌ No          | ❌ No        | ❌ No     | ❌ No          | ❌ No           | Simple scripts/CI  |
 
 ### Verbose Logging
 

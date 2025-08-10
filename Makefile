@@ -25,8 +25,8 @@ audit: ## Run security audit on dependencies
 build: ## Build debug version of the binary
 	@$(CARGO) build
 
-check: ## Check if the project compiles without building
-	@$(CARGO) check
+check: ## Check if the project compiles (in release mode) without building
+	@$(CARGO) check --release --all-targets
 
 ci: check lint clippy test ## Run all CI checks (lint, clippy, test)
 
