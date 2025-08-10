@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.4.0 - 2025-08-10
+
+### ⚡ Performance & User Experience Improvements
+
+This release improves the default user experience by reducing the default timeout from 30 to 5 seconds, making the tool more responsive for typical use cases while maintaining compatibility.
+
+### 🔧 Configuration Changes
+
+#### ⏱️ Faster Default Timeout
+- **Reduced Default Timeout**: Changed from 30 seconds to 5 seconds for better responsiveness
+- **Better User Experience**: Faster feedback for typical documentation validation use cases
+- **Backward Compatible**: Existing configurations and CLI usage patterns remain unchanged
+- **Smart Default**: 5 seconds is sufficient for most URLs while being much more responsive
+
+### 📚 Documentation Updates
+- **Updated Help Text**: All `--help` output now shows `(default: 5)` instead of `(default: 30)`
+- **Configuration Examples**: README and wizard templates updated to reflect new default
+- **Consistent Messaging**: All documentation now consistently shows 5-second default timeout
+
+### 🧪 Technical Details
+- **Constants Updated**: `DEFAULT_TIMEOUT_SECONDS` constant changed from 30 to 5
+- **Test Coverage**: All tests updated to reflect new default value
+- **Template Updates**: Configuration wizard templates updated with new defaults
+- **Zero Breaking Changes**: Existing explicit timeout configurations continue to work exactly as before
+
+This change makes urlsup more responsive out-of-the-box while users can still configure longer timeouts when needed for slower networks or specific use cases.
+
 ## 2.3.0 - 2025-08-09
 
 ### 🚀 Performance Analysis & User Experience Release

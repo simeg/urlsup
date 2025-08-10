@@ -1,6 +1,6 @@
 [package]
 name = "urlsup"
-version = "2.3.0"
+version = "2.4.0"
 description = "CLI to validate URLs in files"
 authors = ["Simon Egersand <s.egersand@gmail.com>"]
 keywords = ["cli", "ci", "github", "action", "links"]

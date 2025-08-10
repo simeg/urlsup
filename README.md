@@ -78,7 +78,7 @@ Using [`awesome_bot`](https://github.com/dkhamsing/awesome_bot) today? Here's a 
 
 ## 🚀 Usage
 ```bash
-urlsup - CLI to validate URLs in files [version 2.3.0]
+urlsup - CLI to validate URLs in files [version 2.4.0]
 
 Usage: urlsup [OPTIONS] [FILES]... [COMMAND]
 
