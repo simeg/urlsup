@@ -65,7 +65,7 @@ pub struct Cli {
     #[arg(long, help_heading = "Retry & Rate Limiting")]
     pub allow_timeout: bool,
 
-    /// Failure threshold - fail only if more than X% of URLs are broken (0-100)
+    /// Fail only if more than X% of URLs are broken (0-100)
     #[arg(long, value_name = "PERCENT", help_heading = "Retry & Rate Limiting")]
     pub failure_threshold: Option<f64>,
 

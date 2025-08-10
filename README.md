@@ -111,7 +111,7 @@ Retry & Rate Limiting:
       --retry-delay <MS>             Delay between retries in ms (default: 1000)
       --rate-limit <MS>              Delay between requests in ms (default: 0)
       --allow-timeout                Allow URLs that timeout
-      --failure-threshold <PERCENT>  Failure threshold - fail only if more than X% of URLs are broken (0-100)
+      --failure-threshold <PERCENT>  Fail only if more than X% of URLs are broken (0-100)
 
 Output & Verbosity:
   -q, --quiet            Suppress progress output
