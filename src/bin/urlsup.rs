@@ -179,7 +179,8 @@ pub async fn run_urlsup_logic(cli: &Cli) -> Result<i32, Box<dyn std::error::Erro
         if let Err(e) = HtmlDashboard::generate_dashboard(&dashboard_data, dashboard_path) {
             eprintln!("Warning: Failed to generate HTML dashboard: {}", e);
         } else {
-            println!("📊 HTML dashboard generated: {}", dashboard_path);
+            // stderr: stdout carries the machine-readable report
+            eprintln!("📊 HTML dashboard generated: {}", dashboard_path);
         }
     }
 

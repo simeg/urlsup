@@ -276,11 +276,14 @@ mod cli {
 
         cmd.arg(file.path()).arg("--format").arg("json");
 
-        cmd.assert().success();
-        cmd.assert()
-            .success()
-            .stdout(contains("\"status\": \"success\""))
-            .stdout(contains("\"issues\": []"));
+        // Parse rather than substring-match: the previous assertions depended
+        // on whitespace after the colon and broke when the writer changed.
+        let out = cmd.assert().success().get_output().stdout.clone();
+        let v: serde_json::Value = serde_json::from_slice(&out)?;
+
+        assert_eq!(v["status"], "success");
+        assert!(v["issues"].as_array().expect("issues array").is_empty());
+        assert_eq!(v["urls"]["failed"], 0);
         Ok(())
     }
 
@@ -295,11 +298,12 @@ mod cli {
 
         cmd.arg(file.path()).arg("--format").arg("json");
 
-        cmd.assert().failure();
-        cmd.assert()
-            .failure()
-            .stdout(contains("\"status\": \"failure\""))
-            .stdout(contains("\"status_code\": 404"));
+        let out = cmd.assert().failure().get_output().stdout.clone();
+        let v: serde_json::Value = serde_json::from_slice(&out)?;
+
+        assert_eq!(v["status"], "failure");
+        assert_eq!(v["issues"][0]["status_code"], 404);
+        assert_eq!(v["urls"]["failed"], 1);
         Ok(())
     }
 
