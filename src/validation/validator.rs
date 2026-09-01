@@ -12,49 +12,46 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::sync::Mutex;
 
-/// Simple token bucket rate limiter for smoother request distribution
+/// Paces requests so that consecutive requests are separated by at least
+/// `min_interval`.
+///
+/// This replaces an earlier token bucket that had a burst capacity equal to the
+/// thread count (so the first N requests ignored the limit entirely) and made
+/// callers busy-poll on a 10ms sleep. Here each caller claims the next slot
+/// under a short lock and then sleeps until exactly that slot, so there is no
+/// polling and no burst.
 #[derive(Debug)]
-struct TokenBucket {
-    tokens: Arc<Mutex<f64>>,
-    capacity: f64,
-    refill_rate: f64, // tokens per second
-    last_refill: Arc<Mutex<Instant>>,
+struct RateLimiter {
+    min_interval: Duration,
+    /// Earliest instant at which the next request may be issued.
+    next_slot: Mutex<Option<Instant>>,
 }
 
-impl TokenBucket {
-    fn new(capacity: f64, refill_rate: f64) -> Self {
+impl RateLimiter {
+    fn new(min_interval: Duration) -> Self {
         Self {
-            tokens: Arc::new(Mutex::new(capacity)),
-            capacity,
-            refill_rate,
-            last_refill: Arc::new(Mutex::new(Instant::now())),
+            min_interval,
+            next_slot: Mutex::new(None),
         }
     }
 
-    async fn acquire(&self) -> bool {
-        let now = Instant::now();
+    /// Reserve the next slot and wait for it.
+    async fn acquire(&self) {
+        let wait_until = {
+            // Kept sync and released before the await below; never hold this
+            // across a suspend point.
+            let mut next_slot = self.next_slot.lock().unwrap_or_else(|e| e.into_inner());
+            let now = Instant::now();
+            let slot = match *next_slot {
+                Some(slot) if slot > now => slot,
+                _ => now,
+            };
+            *next_slot = Some(slot + self.min_interval);
+            slot
+        };
 
-        // Refill tokens based on elapsed time
-        {
-            let mut last_refill = self.last_refill.lock().unwrap();
-            let elapsed = now.duration_since(*last_refill).as_secs_f64();
-            let new_tokens = elapsed * self.refill_rate;
-
-            if new_tokens > 0.0 {
-                let mut tokens = self.tokens.lock().unwrap();
-                *tokens = (*tokens + new_tokens).min(self.capacity);
-                *last_refill = now;
-            }
-        }
-
-        // Try to acquire a token
-        let mut tokens = self.tokens.lock().unwrap();
-        if *tokens >= 1.0 {
-            *tokens -= 1.0;
-            true
-        } else {
-            false
-        }
+        // `sleep_until` is a no-op for an instant already in the past.
+        tokio::time::sleep_until(wait_until).await;
     }
 }
 
@@ -235,13 +232,8 @@ impl ValidateUrls for Validator {
         let retry_delay = config.retry_delay_duration();
         let rate_limit_delay = config.rate_limit_delay_duration();
 
-        // Create token bucket for smoother rate limiting
-        let rate_limiter = if rate_limit_delay > Duration::from_millis(0) {
-            let requests_per_second = 1000.0 / rate_limit_delay.as_millis() as f64;
-            Some(Arc::new(TokenBucket::new(
-                thread_count as f64,
-                requests_per_second,
-            )))
+        let rate_limiter = if rate_limit_delay > Duration::ZERO {
+            Some(Arc::new(RateLimiter::new(rate_limit_delay)))
         } else {
             None
         };
@@ -256,35 +248,45 @@ impl ValidateUrls for Validator {
                 let progress_ref = progress.as_ref();
                 let rate_limiter = rate_limiter.clone();
                 async move {
-                    // Token bucket rate limiting
-                    if let Some(ref limiter) = rate_limiter {
-                        while !limiter.acquire().await {
-                            sleep(Duration::from_millis(10)).await;
-                        }
-                    }
-
                     let mut response = None;
                     let mut attempts = 0;
 
-                    // Retry logic
+                    // Retry transport errors and transient server responses.
+                    // Retrying only transport errors meant a 429 or 503 -- the
+                    // cases most worth retrying -- were reported immediately.
                     while attempts <= retry_attempts {
+                        // Paced per attempt, not per URL: a retry is a request,
+                        // and exempting retries would let a flapping host burst
+                        // straight through --rate-limit. The cost is that worst
+                        // -case time per URL is (retry + 1) * rate_limit rather
+                        // than one interval.
+                        if let Some(ref limiter) = rate_limiter {
+                            limiter.acquire().await;
+                        }
+
                         let request = if config.use_head_requests.unwrap_or(false) {
                             client.head(&ul.url)
                         } else {
                             client.get(&ul.url)
                         };
 
+                        let last_attempt = attempts == retry_attempts;
                         match request.send().await {
                             Ok(resp) => {
+                                if !last_attempt && Self::is_retryable_status(resp.status()) {
+                                    sleep(retry_delay).await;
+                                    attempts += 1;
+                                    continue;
+                                }
                                 response = Some(Ok(resp));
                                 break;
                             }
                             Err(err) => {
-                                if attempts == retry_attempts {
+                                if last_attempt {
                                     response = Some(Err(err));
-                                } else {
-                                    sleep(retry_delay).await;
+                                    break;
                                 }
+                                sleep(retry_delay).await;
                                 attempts += 1;
                             }
                         }
@@ -339,6 +341,14 @@ impl ValidateUrls for Validator {
 }
 
 impl Validator {
+    /// Whether an HTTP status is worth retrying.
+    ///
+    /// 429 and 5xx are transient by convention; 4xx (other than 429) reflect a
+    /// genuinely bad URL and retrying only slows the run down.
+    fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+        status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+    }
+
     /// Optimized URL deduplication using FxHashSet for maximum performance  
     pub fn deduplicate_urls_optimized(urls: &[UrlLocation]) -> Vec<UrlLocation> {
         let mut seen_urls = FxHashSet::with_capacity_and_hasher(urls.len(), Default::default());
@@ -363,6 +373,210 @@ mod tests {
     use std::io::Write;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[tokio::test]
+    async fn test_rate_limiter__spaces_requests_by_min_interval() {
+        let limiter = RateLimiter::new(Duration::from_millis(50));
+        let start = Instant::now();
+
+        // First acquire is immediate, then each subsequent one waits a full
+        // interval, so four acquires span at least three intervals.
+        for _ in 0..4 {
+            limiter.acquire().await;
+        }
+
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(150),
+            "4 acquires at 50ms spacing should take >=150ms, took {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter__does_not_burst_under_concurrency() {
+        // The previous token bucket seeded itself with `thread_count` tokens,
+        // so the first N concurrent requests bypassed the limit entirely.
+        let limiter = Arc::new(RateLimiter::new(Duration::from_millis(40)));
+        let start = Instant::now();
+
+        let mut handles = Vec::new();
+        for _ in 0..5 {
+            let limiter = limiter.clone();
+            handles.push(tokio::spawn(async move { limiter.acquire().await }));
+        }
+        for h in handles {
+            h.await.expect("task panicked");
+        }
+
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(160),
+            "5 concurrent acquires at 40ms spacing should take >=160ms, took {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter__first_acquire_is_immediate() {
+        let limiter = RateLimiter::new(Duration::from_secs(5));
+        let start = Instant::now();
+        limiter.acquire().await;
+        assert!(
+            start.elapsed() < Duration::from_millis(500),
+            "the first request should not wait for a slot"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls__rate_limit_delays_requests() -> TestResult {
+        // In-process timing check against a local mock: three URLs at 150ms
+        // spacing must span at least two enforced gaps.
+        let mut server = Server::new_async().await;
+        let _m = server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(200)
+            .expect_at_least(3)
+            .create();
+
+        let urls: Vec<UrlLocation> = (0..3)
+            .map(|i| UrlLocation {
+                url: format!("{}/rl{i}", server.url()),
+                line: 1,
+                file_name: "test.md".to_string(),
+            })
+            .collect();
+
+        let config = crate::config::Config {
+            timeout: Some(5),
+            threads: Some(8), // high concurrency: spacing must still be enforced
+            rate_limit_delay: Some(150),
+            ..Default::default()
+        };
+
+        let start = Instant::now();
+        let results = Validator::default()
+            .validate_urls_with_config(urls, &config, None)
+            .await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(results.len(), 3);
+        assert!(
+            elapsed >= Duration::from_millis(300),
+            "3 URLs at 150ms spacing should take >=300ms, took {elapsed:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_is_retryable_status__retries_429_and_5xx_only() {
+        use reqwest::StatusCode;
+
+        for code in [
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::GATEWAY_TIMEOUT,
+        ] {
+            assert!(
+                Validator::is_retryable_status(code),
+                "{code} should be retried"
+            );
+        }
+
+        for code in [
+            StatusCode::OK,
+            StatusCode::NO_CONTENT,
+            StatusCode::MOVED_PERMANENTLY,
+            StatusCode::BAD_REQUEST,
+            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+            StatusCode::NOT_FOUND,
+            StatusCode::GONE,
+        ] {
+            assert!(
+                !Validator::is_retryable_status(code),
+                "{code} should not be retried"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls__does_not_retry_404() -> TestResult {
+        let mut server = Server::new_async().await;
+        let m = server
+            .mock("GET", "/missing")
+            .with_status(404)
+            .expect(1) // a genuine 404 must not be retried
+            .create();
+        let endpoint = server.url() + "/missing";
+
+        let config = crate::config::Config {
+            timeout: Some(1),
+            threads: Some(1),
+            retry_attempts: Some(3),
+            retry_delay: Some(10),
+            ..Default::default()
+        };
+
+        let actual = Validator::default()
+            .validate_urls_with_config(
+                vec![UrlLocation {
+                    url: endpoint.clone(),
+                    line: 1,
+                    file_name: "test.md".to_string(),
+                }],
+                &config,
+                None,
+            )
+            .await;
+
+        assert_eq!(actual[0].status_code, Some(404));
+        m.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls__retries_429_then_succeeds() -> TestResult {
+        let mut server = Server::new_async().await;
+        let m429 = server
+            .mock("GET", "/limited")
+            .with_status(429)
+            .expect(1)
+            .create();
+        let m200 = server
+            .mock("GET", "/limited")
+            .with_status(200)
+            .expect(1)
+            .create();
+        let endpoint = server.url() + "/limited";
+
+        let config = crate::config::Config {
+            timeout: Some(1),
+            threads: Some(1),
+            retry_attempts: Some(2),
+            retry_delay: Some(10),
+            ..Default::default()
+        };
+
+        let actual = Validator::default()
+            .validate_urls_with_config(
+                vec![UrlLocation {
+                    url: endpoint.clone(),
+                    line: 1,
+                    file_name: "test.md".to_string(),
+                }],
+                &config,
+                None,
+            )
+            .await;
+
+        // A 429 that resolves on retry should be reported as reachable.
+        assert_eq!(actual[0].status_code, Some(200));
+        assert!(actual[0].is_ok());
+        m429.assert();
+        m200.assert();
+        Ok(())
+    }
 
     #[test]
     fn test_validation_result__when_200__is_ok() {
@@ -656,7 +870,7 @@ mod tests {
     #[tokio::test]
     async fn test_validate_urls_with_config_retry() -> TestResult {
         let mut server = Server::new_async().await;
-        let _m = server
+        let m = server
             .mock("GET", "/retry")
             .with_status(500)
             .expect(3) // Should be called 3 times (initial + 2 retries)
@@ -687,6 +901,9 @@ mod tests {
         assert_eq!(actual.len(), 1);
         assert_eq!(actual[0].url, endpoint);
         assert_eq!(actual[0].status_code, Some(500));
+        // The mock's `expect(3)` is only enforced here; without this the
+        // retry count was never actually checked.
+        m.assert();
 
         Ok(())
     }
