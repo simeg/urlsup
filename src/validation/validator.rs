@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use tokio::time::{Duration, Instant, sleep};
 
+use crate::core::error::{Result, UrlsUpError};
 use crate::{UrlLocation, config::Config, ui::progress::ProgressReporter};
 
 use std::cmp::Ordering;
@@ -57,12 +58,17 @@ impl RateLimiter {
 
 #[async_trait]
 pub trait ValidateUrls {
+    /// Validate every URL, returning one result per unique URL.
+    ///
+    /// Returns `Err` only for setup failures that make the whole run
+    /// meaningless (an unusable proxy or HTTP client). A URL that is simply
+    /// unreachable is a successful run with a failing `ValidationResult`.
     async fn validate_urls_with_config(
         &self,
         urls: Vec<UrlLocation>,
         config: &Config,
         progress: Option<&mut ProgressReporter>,
-    ) -> Vec<ValidationResult>;
+    ) -> Result<Vec<ValidationResult>>;
 }
 
 #[derive(Default, Debug)]
@@ -170,7 +176,9 @@ impl fmt::Display for ValidationResult {
                 &self.url, desc, &self.file_name, &self.line
             )
         } else {
-            panic!("ValidationResult should always have status_code or description")
+            // A Display impl must never panic; callers may be formatting this
+            // inside an error path already.
+            write!(f, "{} - {} - L{}", &self.url, &self.file_name, &self.line)
         }
     }
 }
@@ -182,7 +190,7 @@ impl ValidateUrls for Validator {
         urls: Vec<UrlLocation>,
         config: &Config,
         mut progress: Option<&mut ProgressReporter>,
-    ) -> Vec<ValidationResult> {
+    ) -> Result<Vec<ValidationResult>> {
         // Optimized deduplication using AHashSet
         let unique_urls = Self::deduplicate_urls_optimized(&urls);
         let unique_count = unique_urls.len(); // Store count before moving
@@ -218,14 +226,20 @@ impl ValidateUrls for Validator {
             client_builder = client_builder.danger_accept_invalid_certs(true);
         }
 
-        // Proxy configuration
-        if let Some(ref proxy_url) = config.proxy
-            && let Ok(proxy) = reqwest::Proxy::all(proxy_url)
-        {
+        // Proxy configuration. A bad proxy URL used to be swallowed silently,
+        // so requests went out unproxied while the user believed otherwise.
+        // Both of these are setup failures rather than per-URL failures, so
+        // they propagate to the caller instead of being reported as results.
+        if let Some(ref proxy_url) = config.proxy {
+            let proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
+                UrlsUpError::Config(format!(
+                    "invalid proxy '{proxy_url}': {e}. Refusing to send requests unproxied."
+                ))
+            })?;
             client_builder = client_builder.proxy(proxy);
         }
 
-        let client = client_builder.build().unwrap();
+        let client = client_builder.build().map_err(UrlsUpError::Http)?;
         let progress_counter = Arc::new(AtomicUsize::new(0));
 
         let retry_attempts = config.retry_attempts.unwrap_or(0);
@@ -295,13 +309,16 @@ impl ValidateUrls for Validator {
                     // Update progress in batches to reduce atomic operations
                     let current = progress_counter.fetch_add(1, AtomicOrdering::Relaxed) + 1;
                     if let Some(prog) = progress_ref {
-                        // Only update progress every 10 requests or on significant milestones
-                        if current.is_multiple_of(10) || current == 1 {
+                        // Batch updates, but always report the first and last so the
+                        // bar never stalls short of the total
+                        if current.is_multiple_of(10) || current == 1 || current == unique_count {
                             prog.update_url_progress(current);
                         }
                     }
 
-                    (ul, response.unwrap())
+                    // `retry_attempts + 1` iterations always assign `response`,
+                    // so `None` is unreachable; be explicit rather than unwrap.
+                    (ul, response)
                 }
             })
             .buffer_unordered(concurrency);
@@ -311,6 +328,12 @@ impl ValidateUrls for Validator {
         let mut success_count = 0;
 
         while let Some((ul, response)) = find_results_and_responses.next().await {
+            let Some(response) = response else {
+                return Err(UrlsUpError::Validation(format!(
+                    "internal error: no response recorded for '{}'",
+                    ul.url
+                )));
+            };
             let validation_result = match response {
                 Ok(res) => {
                     let status_code = res.status().as_u16();
@@ -336,7 +359,7 @@ impl ValidateUrls for Validator {
             prog.finish_url_validation(success_count, result.len());
         }
 
-        result
+        Ok(result)
     }
 }
 
@@ -349,7 +372,7 @@ impl Validator {
         status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
     }
 
-    /// Optimized URL deduplication using FxHashSet for maximum performance  
+    /// Optimized URL deduplication using FxHashSet for maximum performance
     pub fn deduplicate_urls_optimized(urls: &[UrlLocation]) -> Vec<UrlLocation> {
         let mut seen_urls = FxHashSet::with_capacity_and_hasher(urls.len(), Default::default());
         let mut unique_urls = Vec::with_capacity(urls.len());
@@ -372,7 +395,68 @@ mod tests {
     use mockito::Server;
     use std::io::Write;
 
-    type TestResult = Result<(), Box<dyn std::error::Error>>;
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    #[tokio::test]
+    async fn test_validate_urls__invalid_proxy_is_an_error_not_a_silent_pass() {
+        // A bad proxy used to be swallowed, so requests went out unproxied.
+        // Returning an empty result set instead would report "no issues" and
+        // exit 0, so this has to surface as an error.
+        let config = crate::config::Config {
+            timeout: Some(1),
+            threads: Some(1),
+            proxy: Some("not a valid proxy url".to_string()),
+            ..Default::default()
+        };
+
+        let result = Validator::default()
+            .validate_urls_with_config(
+                vec![UrlLocation {
+                    url: "https://example.com".to_string(),
+                    line: 1,
+                    file_name: "test.md".to_string(),
+                }],
+                &config,
+                None,
+            )
+            .await;
+
+        let err = result.expect_err("an unusable proxy must not report success");
+        let message = err.to_string();
+        assert!(
+            message.contains("proxy"),
+            "error should name the proxy, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_urls__valid_proxy_is_accepted() {
+        // Guard against over-rejecting: a well-formed proxy URL must still be
+        // accepted even though nothing is listening on it.
+        let config = crate::config::Config {
+            timeout: Some(1),
+            threads: Some(1),
+            proxy: Some("http://127.0.0.1:9".to_string()),
+            ..Default::default()
+        };
+
+        let result = Validator::default()
+            .validate_urls_with_config(
+                vec![UrlLocation {
+                    url: "https://example.com".to_string(),
+                    line: 1,
+                    file_name: "test.md".to_string(),
+                }],
+                &config,
+                None,
+            )
+            .await;
+
+        // The run succeeds; the URL itself fails because the proxy is dead.
+        let results = result.expect("a well-formed proxy URL must be accepted");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_not_ok());
+    }
 
     #[tokio::test]
     async fn test_rate_limiter__spaces_requests_by_min_interval() {
@@ -416,17 +500,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rate_limiter__first_acquire_is_immediate() {
-        let limiter = RateLimiter::new(Duration::from_secs(5));
-        let start = Instant::now();
-        limiter.acquire().await;
-        assert!(
-            start.elapsed() < Duration::from_millis(500),
-            "the first request should not wait for a slot"
-        );
-    }
-
-    #[tokio::test]
     async fn test_validate_urls__rate_limit_delays_requests() -> TestResult {
         // In-process timing check against a local mock: three URLs at 150ms
         // spacing must span at least two enforced gaps.
@@ -455,7 +528,8 @@ mod tests {
         let start = Instant::now();
         let results = Validator::default()
             .validate_urls_with_config(urls, &config, None)
-            .await;
+            .await
+            .expect("validation setup should succeed");
         let elapsed = start.elapsed();
 
         assert_eq!(results.len(), 3);
@@ -464,6 +538,17 @@ mod tests {
             "3 URLs at 150ms spacing should take >=300ms, took {elapsed:?}"
         );
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter__first_acquire_is_immediate() {
+        let limiter = RateLimiter::new(Duration::from_secs(5));
+        let start = Instant::now();
+        limiter.acquire().await;
+        assert!(
+            start.elapsed() < Duration::from_millis(500),
+            "the first request should not wait for a slot"
+        );
     }
 
     #[test]
@@ -528,7 +613,8 @@ mod tests {
                 &config,
                 None,
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         assert_eq!(actual[0].status_code, Some(404));
         m.assert();
@@ -568,7 +654,8 @@ mod tests {
                 &config,
                 None,
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         // A 429 that resolves on retry should be reported as reachable.
         assert_eq!(actual[0].status_code, Some(200));
@@ -576,6 +663,22 @@ mod tests {
         m429.assert();
         m200.assert();
         Ok(())
+    }
+
+    #[test]
+    fn test_display__no_status_and_no_description_does_not_panic() {
+        // Display must never panic; this combination used to abort.
+        let vr = ValidationResult {
+            url: "https://example.com".to_string(),
+            line: 9,
+            file_name: "test.md".to_string(),
+            status_code: None,
+            description: None,
+        };
+        let rendered = vr.to_string();
+        assert!(rendered.contains("https://example.com"));
+        assert!(rendered.contains("test.md"));
+        assert!(rendered.contains("L9"));
     }
 
     #[test]
@@ -704,7 +807,8 @@ mod tests {
                 &config,
                 None,
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
         let actual = results.first().expect("No ValidationResult returned");
 
         assert_eq!(actual.url, endpoint);
@@ -733,7 +837,8 @@ mod tests {
                 &config,
                 None,
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
         let actual = results.first().expect("No ValidationResult returned");
 
         assert_eq!(actual.url, endpoint);
@@ -763,7 +868,8 @@ mod tests {
                 &config,
                 None,
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
         let actual = results.first().expect("No ValidationResult returned");
 
         assert_eq!(actual.url, endpoint);
@@ -815,7 +921,8 @@ mod tests {
                 &config,
                 None,
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         actual.sort(); // Sort to be able to assert deterministically
 
@@ -858,7 +965,8 @@ mod tests {
                 &config,
                 None,
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         assert_eq!(actual.len(), 1);
         assert_eq!(actual[0].url, endpoint_200);
@@ -896,7 +1004,8 @@ mod tests {
                 &config,
                 None,
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         assert_eq!(actual.len(), 1);
         assert_eq!(actual[0].url, endpoint);
@@ -942,7 +1051,8 @@ mod tests {
                 &config,
                 None,
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
         let duration = start.elapsed();
 
         assert_eq!(actual.len(), 2);
@@ -980,7 +1090,8 @@ mod tests {
                 &config,
                 None,
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         assert_eq!(actual.len(), 1);
         assert_eq!(actual[0].status_code, Some(200));
@@ -1053,7 +1164,8 @@ mod tests {
 
         let result = validator
             .validate_urls_with_config(vec![url_location], &config, None)
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         // Should not panic and return a result (may still fail due to DNS, but SSL shouldn't be the issue)
         assert!(!result.is_empty());
@@ -1067,7 +1179,8 @@ mod tests {
 
         let result = validator
             .validate_urls_with_config(vec![], &config, None)
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         assert!(result.is_empty());
         Ok(())
@@ -1162,7 +1275,8 @@ mod tests {
 
         let result = validator
             .validate_urls_with_config(vec![url_location], &config, None)
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         // Should return a result (even if proxy fails)
         assert_eq!(result.len(), 1);
@@ -1189,7 +1303,8 @@ mod tests {
 
         let result = validator
             .validate_urls_with_config(vec![url_location], &config, None)
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         assert_eq!(result.len(), 1);
         assert!(result[0].status_code.is_none());
@@ -1220,7 +1335,8 @@ mod tests {
                 &config,
                 Some(&mut progress),
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].status_code, Some(200));
@@ -1251,7 +1367,8 @@ mod tests {
                 &config,
                 None,
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
         let duration = start.elapsed();
 
         assert_eq!(result.len(), 1);
@@ -1281,7 +1398,8 @@ mod tests {
         let start = std::time::Instant::now();
         let result = validator
             .validate_urls_with_config(vec![url_location], &config, None)
-            .await;
+            .await
+            .expect("validation setup should succeed");
         let duration = start.elapsed();
 
         assert_eq!(result.len(), 1);
@@ -1325,7 +1443,8 @@ mod tests {
 
         let result = validator
             .validate_urls_with_config(vec![url_location], &config, None)
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         // Should use default user agent and succeed
         assert_eq!(result.len(), 1);
@@ -1367,7 +1486,8 @@ mod tests {
         let validator = Validator::default();
         let result = validator
             .validate_urls_with_config(urls, &config, Some(&mut progress))
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         // Should process all URLs
         assert_eq!(result.len(), 3);
@@ -1408,7 +1528,8 @@ mod tests {
                 &config,
                 None,
             )
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].status_code, Some(200));
@@ -1439,7 +1560,8 @@ mod tests {
         let validator = Validator::default();
         let result = validator
             .validate_urls_with_config(urls, &config, None)
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         // All URLs should succeed since they're the same
         assert_eq!(result.len(), 1); // Deduplicated to 1 unique URL
@@ -1474,7 +1596,8 @@ mod tests {
         let validator = Validator::default();
         let result = validator
             .validate_urls_with_config(urls, &config, None)
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         assert_eq!(result.len(), 2);
 
@@ -1515,7 +1638,8 @@ mod tests {
         let start = std::time::Instant::now();
         let result = validator
             .validate_urls_with_config(urls, &config, None)
-            .await;
+            .await
+            .expect("validation setup should succeed");
         let duration = start.elapsed();
 
         // All URLs should be processed
@@ -1554,7 +1678,8 @@ mod tests {
         let validator = Validator::default();
         let result = validator
             .validate_urls_with_config(urls, &config, None)
-            .await;
+            .await
+            .expect("validation setup should succeed");
 
         assert_eq!(result.len(), 3);
 

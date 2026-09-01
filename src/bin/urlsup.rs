@@ -370,7 +370,7 @@ pub async fn validate_urls(
     let start_time = std::time::Instant::now();
     let validation_results = validator
         .validate_urls_with_config(filtered_urls.to_vec(), config, progress)
-        .await;
+        .await?;
 
     // Log validation completion
     let duration = start_time.elapsed();
