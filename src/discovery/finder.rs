@@ -37,27 +37,41 @@ pub struct Finder {}
 
 impl UrlFinder for Finder {
     fn find_urls(&self, paths: Vec<&Path>) -> io::Result<Vec<UrlLocation>> {
-        // Use parallel processing for file reading and URL extraction
-        let results: std::result::Result<Vec<Vec<UrlLocation>>, io::Error> = paths
+        // Use parallel processing for file reading and URL extraction.
+        //
+        // A file that cannot be read or parsed is reported on stderr and
+        // skipped: one bad file must not abort the check for every other file.
+        // Collecting into a Vec (rather than a Result) keeps input order
+        // deterministic while letting individual files fail independently.
+        let file_results: Vec<Vec<UrlLocation>> = paths
             .par_iter()
-            .map(|path| -> io::Result<Vec<UrlLocation>> {
-                let url_matches = Self::parse_lines_with_urls(path)?;
+            .map(|path| -> Vec<UrlLocation> {
+                let url_matches = match Self::parse_lines_with_urls(path) {
+                    Ok(url_matches) => url_matches,
+                    Err(e) => {
+                        eprintln!("Warning: could not read {}: {e}", path.display());
+                        return Vec::new();
+                    }
+                };
+
                 let estimated_capacity = Self::estimate_url_capacity(path, url_matches.len());
                 let mut file_urls = Vec::with_capacity(estimated_capacity);
 
                 for url_match in url_matches {
-                    // Handle parse_urls error by converting to IO error
-                    let url_locations = Self::parse_urls(url_match)
-                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                    file_urls.extend(url_locations);
+                    match Self::parse_urls(url_match) {
+                        Ok(url_locations) => file_urls.extend(url_locations),
+                        Err(e) => {
+                            eprintln!("Warning: could not parse {}: {e}", path.display());
+                            return Vec::new();
+                        }
+                    }
                 }
 
-                Ok(file_urls)
+                file_urls
             })
             .collect();
 
         // Flatten the results into a single vector
-        let file_results = results?;
         let total_capacity: usize = file_results.iter().map(|v| v.len()).sum();
         let mut result = Vec::with_capacity(total_capacity);
 
@@ -585,6 +599,71 @@ mod tests {
         let finder = Finder::default();
         // Should create without panicking
         assert!(std::ptr::eq(&finder, &finder)); // Basic identity check
+    }
+
+    /// A single unreadable file must not abort the whole run - the readable
+    /// files still have to produce their URLs.
+    #[cfg(unix)]
+    #[test]
+    fn test_find_urls_skips_unreadable_file_and_returns_rest() -> TestResult {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempfile::tempdir()?;
+        let base = temp_dir.path();
+
+        let unreadable = base.join("unreadable.md");
+        let readable = base.join("readable.md");
+        std::fs::write(&unreadable, "Hidden: https://should-not-be-seen.com")?;
+        std::fs::write(&readable, "Visible: https://visible.example.com")?;
+
+        // Make the first file genuinely unreadable (permission denied on open).
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000))?;
+
+        let finder = Finder::default();
+        let result = finder.find_urls(vec![unreadable.as_path(), readable.as_path()]);
+
+        // Restore permissions so the tempdir can be cleaned up.
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o644))?;
+
+        let result = result.expect("unreadable file must not fail the entire run");
+        let urls: Vec<&str> = result.iter().map(|ul| ul.url()).collect();
+
+        assert_eq!(urls, vec!["https://visible.example.com"]);
+
+        Ok(())
+    }
+
+    /// Multiple valid files keep returning every URL, in input order.
+    #[test]
+    fn test_find_urls_all_valid_files_returns_all_urls() -> TestResult {
+        let temp_dir = tempfile::tempdir()?;
+        let base = temp_dir.path();
+
+        let first = base.join("first.md");
+        let second = base.join("second.md");
+        let third = base.join("third.md");
+        std::fs::write(&first, "One: https://one.example.com")?;
+        std::fs::write(
+            &second,
+            "Two: https://two.example.com and https://two-b.example.com",
+        )?;
+        std::fs::write(&third, "Three: https://three.example.com")?;
+
+        let finder = Finder::default();
+        let result = finder.find_urls(vec![first.as_path(), second.as_path(), third.as_path()])?;
+
+        let urls: Vec<&str> = result.iter().map(|ul| ul.url()).collect();
+        assert_eq!(
+            urls,
+            vec![
+                "https://one.example.com",
+                "https://two.example.com",
+                "https://two-b.example.com",
+                "https://three.example.com",
+            ]
+        );
+
+        Ok(())
     }
 
     #[test]
