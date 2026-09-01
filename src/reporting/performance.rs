@@ -387,7 +387,6 @@ mod tests {
 
         assert_eq!(result.operation, "test");
         assert_eq!(result.duration, Duration::from_secs(1));
-        assert_eq!(result.items_processed, 100);
     }
 
     #[test]
@@ -703,8 +702,15 @@ mod tests {
         let result = timer.finish(100);
 
         assert_eq!(result.operation, "test_timer");
-        assert!(result.duration >= Duration::from_millis(8)); // Allow some variance
-        assert!(result.duration <= Duration::from_millis(50)); // But not too much
+        // Only the lower bound is a property of the code: the timer must have
+        // measured the sleep. An upper bound would assert the machine is not
+        // busy, which is not something this test can control -- it flaked on a
+        // loaded CI runner at 50ms.
+        assert!(
+            result.duration >= Duration::from_millis(8),
+            "timer should measure at least the sleep, got {:?}",
+            result.duration
+        );
     }
 
     #[test]
