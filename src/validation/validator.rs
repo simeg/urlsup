@@ -6,9 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use tokio::time::{Duration, Instant, sleep};
 
-use crate::{
-    UrlLocation, config::Config, core::constants::http_status, ui::progress::ProgressReporter,
-};
+use crate::{UrlLocation, config::Config, ui::progress::ProgressReporter};
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -105,10 +103,11 @@ impl PartialEq for ValidationResult {
 impl ValidationResult {
     /// Check if this validation result represents a successful URL check.
     ///
-    /// Currently only considers HTTP 200 as successful, but this could be
-    /// extended to include other 2xx status codes based on configuration.
+    /// Any 2xx response means the URL is reachable, which is all a link check
+    /// asserts. Restricting this to 200 flagged valid 204/206 endpoints as
+    /// broken links.
     pub fn is_ok(&self) -> bool {
-        matches!(self.status_code, Some(http_status::OK))
+        matches!(self.status_code, Some(code) if (200..300).contains(&code))
     }
 
     /// Check if this validation result represents a failed URL check.
@@ -389,6 +388,38 @@ mod tests {
 
         assert!(vr.is_ok());
         assert!(!vr.is_not_ok());
+    }
+
+    #[test]
+    fn test_validation_result_all_2xx_are_ok() {
+        // Any 2xx is a reachable URL. Regression: only 200 used to pass, so a
+        // 204 endpoint was reported as a broken link and failed CI.
+        for code in [200, 201, 202, 203, 204, 205, 206, 207, 208, 226, 299] {
+            let vr = ValidationResult {
+                url: "irrelevant".to_string(),
+                line: 0,
+                file_name: "irrelevant".to_string(),
+                status_code: Some(code),
+                description: None,
+            };
+            assert!(vr.is_ok(), "HTTP {code} should be treated as success");
+            assert!(!vr.is_not_ok(), "HTTP {code} should not be a failure");
+        }
+    }
+
+    #[test]
+    fn test_validation_result_non_2xx_are_not_ok() {
+        for code in [100, 199, 300, 301, 400, 404, 500, 503] {
+            let vr = ValidationResult {
+                url: "irrelevant".to_string(),
+                line: 0,
+                file_name: "irrelevant".to_string(),
+                status_code: Some(code),
+                description: None,
+            };
+            assert!(!vr.is_ok(), "HTTP {code} should not be treated as success");
+            assert!(vr.is_not_ok(), "HTTP {code} should be a failure");
+        }
     }
 
     #[test]
