@@ -697,12 +697,14 @@ mod tests {
         // Create a regular file
         fs::write(base.join("target.txt"), "target file")?;
 
-        // Try to create a symlink (may fail on some systems)
-        let symlink_path = base.join("link.txt");
         let target_path = base.join("target.txt");
 
+        // `symlink_path` is unix-only; declaring it here would warn as unused on
+        // other platforms.
         #[cfg(unix)]
         {
+            let symlink_path = base.join("link.txt");
+
             if std::os::unix::fs::symlink(&target_path, &symlink_path).is_ok() {
                 let result = expand_paths(vec![&symlink_path], false, None, false)?;
 

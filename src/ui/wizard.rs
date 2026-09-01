@@ -576,7 +576,13 @@ impl ConfigurationWizard {
             return Ok(None);
         }
 
-        let codes: Result<Vec<u16>, _> = codes_input.split(',').map(|s| s.trim().parse()).collect();
+        // Turbofish is required, not stylistic: on Windows `dialoguer` pulls in
+        // `encode_unicode`, which adds further `FromIterator` impls for
+        // `Vec<u16>`, and inference then cannot pick a target type for `parse`.
+        let codes: Result<Vec<u16>, _> = codes_input
+            .split(',')
+            .map(|s| s.trim().parse::<u16>())
+            .collect();
 
         match codes {
             Ok(codes) => Ok(Some(codes)),
