@@ -752,27 +752,33 @@ mod tests {
     #[test]
     #[serial]
     fn test_install_completion_no_home() {
-        // Save original HOME
+        // Both sources must be cleared: the home directory is looked up as
+        // HOME with a USERPROFILE fallback, since Windows sets the latter.
         let original_home = std::env::var("HOME").ok();
+        let original_userprofile = std::env::var("USERPROFILE").ok();
 
-        // Remove HOME temporarily
         unsafe {
             std::env::remove_var("HOME");
+            std::env::remove_var("USERPROFILE");
         }
 
         let result = install_completion(clap_complete::Shell::Bash);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("HOME environment variable not set")
-        );
 
-        // Restore HOME
-        if let Some(home) = original_home {
-            unsafe {
+        // Restore before asserting so a failure cannot leak the cleared
+        // environment into other tests.
+        unsafe {
+            if let Some(home) = original_home {
                 std::env::set_var("HOME", home);
             }
+            if let Some(userprofile) = original_userprofile {
+                std::env::set_var("USERPROFILE", userprofile);
+            }
         }
+
+        let err = result.expect_err("no home directory should be an error");
+        assert!(
+            err.contains("HOME environment variable not set"),
+            "unexpected error: {err}"
+        );
     }
 }
