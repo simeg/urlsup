@@ -246,8 +246,9 @@ impl ValidateUrls for Validator {
             None
         };
 
-        // Process URLs in batches for better memory efficiency
-        let batch_size = Self::calculate_optimal_batch_size(unique_count, thread_count);
+        // Honour the configured concurrency; there is no point opening more
+        // connections than there are URLs to fetch.
+        let concurrency = thread_count.min(unique_count).max(1);
         let mut find_results_and_responses = stream::iter(unique_urls)
             .map(|ul| {
                 let client = &client;
@@ -301,7 +302,7 @@ impl ValidateUrls for Validator {
                     (ul, response.unwrap())
                 }
             })
-            .buffer_unordered(batch_size);
+            .buffer_unordered(concurrency);
 
         // Pre-allocate result vector with capacity for better memory efficiency
         let mut result = Vec::with_capacity(unique_count);
@@ -338,19 +339,6 @@ impl ValidateUrls for Validator {
 }
 
 impl Validator {
-    /// Calculate optimal batch size based on URL count and system resources
-    fn calculate_optimal_batch_size(url_count: usize, thread_count: usize) -> usize {
-        // Base batch size on thread count, but adapt based on URL count
-        let base_batch_size = thread_count;
-
-        match url_count {
-            0..=10 => base_batch_size.min(2),      // Small batch for few URLs
-            11..=100 => base_batch_size.min(10),   // Medium batch for moderate URLs
-            101..=1000 => base_batch_size.min(50), // Larger batch for many URLs
-            _ => base_batch_size.min(100),         // Cap at 100 for very large sets
-        }
-    }
-
     /// Optimized URL deduplication using FxHashSet for maximum performance  
     pub fn deduplicate_urls_optimized(urls: &[UrlLocation]) -> Vec<UrlLocation> {
         let mut seen_urls = FxHashSet::with_capacity_and_hasher(urls.len(), Default::default());
