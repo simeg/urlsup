@@ -73,7 +73,7 @@ pub fn handle_special_commands(cli: &Cli) -> Option<i32> {
 /// Main URL validation logic extracted from main() for testing
 pub async fn run_urlsup_logic(cli: &Cli) -> Result<i32, Box<dyn std::error::Error>> {
     // Parse CLI arguments into CliConfig using the derive-based CLI
-    let cli_config = cli_to_config(cli);
+    let cli_config = cli_to_config(cli)?;
 
     // Load and merge configuration
     let config = load_and_merge_config(&cli_config)?;
@@ -261,10 +261,15 @@ pub fn process_and_expand_files(
     validate_file_paths(&files)?;
 
     // Expand directories to file paths using configuration
-    let expanded_paths = expand_paths(files, cli.recursive, config.file_types_as_set().as_ref())
-        .inspect_err(|e| {
-            logging::log_error("Could not expand file paths", Some(e));
-        })?;
+    let expanded_paths = expand_paths(
+        files,
+        cli.recursive,
+        config.file_types_as_set().as_ref(),
+        config.no_ignore.unwrap_or(false),
+    )
+    .inspect_err(|e| {
+        logging::log_error("Could not expand file paths", Some(e));
+    })?;
 
     if expanded_paths.is_empty() {
         let error = "No files found to process";
@@ -618,6 +623,7 @@ pub fn determine_exit_code(issues_found: usize, total_validated: usize, config: 
 #[allow(clippy::field_reassign_with_default)] // Test code for clarity
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
     use std::path::Path;
     use tempfile::TempDir;
@@ -629,6 +635,7 @@ mod tests {
             command: None,
             files: vec!["test.md".to_string()],
             recursive: false,
+            no_ignore: false,
             timeout: None,
             concurrency: None,
             include: None,
@@ -639,6 +646,7 @@ mod tests {
             retry_delay: None,
             rate_limit: None,
             allow_timeout: false,
+            no_allow_timeout: false,
             failure_threshold: None,
             quiet: false,
             verbose: false,
@@ -647,9 +655,11 @@ mod tests {
             user_agent: None,
             proxy: None,
             insecure: false,
+            no_insecure: false,
             config: None,
             no_config: false,
             show_performance: false,
+            no_show_performance: false,
             html_dashboard: None,
         }
     }
@@ -695,7 +705,11 @@ mod tests {
         }
     }
 
+    // Mutates process-global HOME; cargo runs tests in this binary on parallel
+    // threads, so it must not overlap with anything resolving a home-relative
+    // path.
     #[test]
+    #[serial]
     fn test_handle_special_commands_install_bash() {
         let temp_dir = TempDir::new().unwrap();
         let temp_home = temp_dir.path().to_str().unwrap();
@@ -1296,10 +1310,14 @@ mod tests {
         let mut config = Config::default();
         config.failure_threshold = Some(50.0);
 
-        // Edge case: 0 total URLs
-        let exit_code = determine_exit_code(0, 0, &config);
-        // This would result in NaN, but 0 issues should pass
-        assert_eq!(exit_code, 0);
+        // Edge case: 0 total URLs. 0/0 is NaN and every NaN comparison is
+        // false, so this used to pass only by accident; it is now guarded.
+        assert_eq!(determine_exit_code(0, 0, &config), 0);
+
+        // A zero threshold is the case where relying on NaN would be most
+        // fragile: `NaN > 0.0` is false, but so is any other NaN comparison.
+        config.failure_threshold = Some(0.0);
+        assert_eq!(determine_exit_code(0, 0, &config), 0);
     }
 
     #[test]
@@ -1345,26 +1363,6 @@ mod tests {
     }
 
     #[test]
-    fn test_allowlist_empty_entry_matches_nothing() {
-        assert!(!allowlist_matches("https://example.com/", ""));
-        assert!(!allowlist_matches("https://example.com/", "   "));
-    }
-
-    #[test]
-    fn test_allowlist_host_matching_is_case_insensitive() {
-        assert!(allowlist_matches("https://EXAMPLE.COM/", "example.com"));
-        assert!(allowlist_matches("https://example.com/", "EXAMPLE.COM"));
-        assert!(allowlist_matches(
-            "https://API.Example.Com/x",
-            "example.com"
-        ));
-        assert!(!allowlist_matches(
-            "https://EXAMPLE.COM.attacker.net/",
-            "example.com"
-        ));
-    }
-
-    #[test]
     fn test_allowlist_bare_host_rejects_suffix_impersonation() {
         // Security regression: a naive substring match would allow this.
         assert!(!allowlist_matches(
@@ -1378,15 +1376,58 @@ mod tests {
     }
 
     #[test]
-    fn test_allowlist_url_prefix_requires_matching_host() {
-        // A prefix entry must not match a lookalike host even if the raw
-        // string prefix would otherwise line up.
+    fn test_allowlist_bare_host_rejects_prefix_impersonation() {
+        assert!(!allowlist_matches("https://notexample.com/", "example.com"));
+        assert!(!allowlist_matches("https://myexample.com/x", "example.com"));
+    }
+
+    #[test]
+    fn test_allowlist_bare_host_matches_host_and_subdomains() {
+        assert!(allowlist_matches("https://example.com/", "example.com"));
+        assert!(allowlist_matches("https://example.com", "example.com"));
+        assert!(allowlist_matches(
+            "http://example.com/deep/path",
+            "example.com"
+        ));
+        assert!(allowlist_matches(
+            "https://api.example.com/x",
+            "example.com"
+        ));
+        assert!(allowlist_matches(
+            "https://a.b.example.com/x",
+            "example.com"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_bare_host_does_not_match_parent_domain() {
+        // Allowlisting a subdomain must not allow the parent or a sibling.
         assert!(!allowlist_matches(
-            "https://example.com.attacker.net/docs",
+            "https://example.com/",
+            "api.example.com"
+        ));
+        assert!(!allowlist_matches(
+            "https://other.example.com/",
+            "api.example.com"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_url_prefix_respects_path_boundary() {
+        assert!(allowlist_matches(
+            "https://example.com/docs",
+            "https://example.com/docs"
+        ));
+        assert!(allowlist_matches(
+            "https://example.com/docs/page",
             "https://example.com/docs"
         ));
         assert!(!allowlist_matches(
-            "http://example.com/docs",
+            "https://example.com/docsomething",
+            "https://example.com/docs"
+        ));
+        assert!(!allowlist_matches(
+            "https://example.com/other",
             "https://example.com/docs"
         ));
     }
@@ -1413,6 +1454,71 @@ mod tests {
             "https://example.com/docs/",
             "https://example.com/docs/"
         ));
+    }
+
+    #[test]
+    fn test_allowlist_url_prefix_requires_matching_host() {
+        // A prefix entry must not match a lookalike host even if the raw
+        // string prefix would otherwise line up.
+        assert!(!allowlist_matches(
+            "https://example.com.attacker.net/docs",
+            "https://example.com/docs"
+        ));
+        assert!(!allowlist_matches(
+            "http://example.com/docs",
+            "https://example.com/docs"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_host_matching_is_case_insensitive() {
+        assert!(allowlist_matches("https://EXAMPLE.COM/", "example.com"));
+        assert!(allowlist_matches("https://example.com/", "EXAMPLE.COM"));
+        assert!(allowlist_matches(
+            "https://API.Example.Com/x",
+            "example.com"
+        ));
+        assert!(!allowlist_matches(
+            "https://EXAMPLE.COM.attacker.net/",
+            "example.com"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_with_ports() {
+        // Bare-host entry with a port: the port is ignored on both sides.
+        assert!(allowlist_matches(
+            "https://example.com:8443/path",
+            "example.com:8443"
+        ));
+        assert!(allowlist_matches(
+            "https://example.com/path",
+            "example.com:8443"
+        ));
+        assert!(allowlist_matches(
+            "https://example.com:8443/path",
+            "example.com"
+        ));
+        assert!(!allowlist_matches(
+            "https://example.com.attacker.net:8443/",
+            "example.com:8443"
+        ));
+
+        // URL-prefix entry with a port still compares as a prefix.
+        assert!(allowlist_matches(
+            "http://localhost:3000/api/v1",
+            "http://localhost:3000/api"
+        ));
+        assert!(!allowlist_matches(
+            "http://localhost:3000/apixyz",
+            "http://localhost:3000/api"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_empty_entry_matches_nothing() {
+        assert!(!allowlist_matches("https://example.com/", ""));
+        assert!(!allowlist_matches("https://example.com/", "   "));
     }
 
     #[test]
@@ -1451,41 +1557,17 @@ mod tests {
     }
 
     #[test]
-    fn test_allowlist_url_prefix_respects_path_boundary() {
-        assert!(allowlist_matches(
-            "https://example.com/docs",
-            "https://example.com/docs"
-        ));
-        assert!(allowlist_matches(
-            "https://example.com/docs/page",
-            "https://example.com/docs"
-        ));
-        assert!(!allowlist_matches(
-            "https://example.com/docsomething",
-            "https://example.com/docs"
-        ));
-        assert!(!allowlist_matches(
-            "https://example.com/other",
-            "https://example.com/docs"
-        ));
-    }
+    fn test_warn_on_unmatchable_allowlist_entries_identifies_path_fragments() {
+        // Path fragments used to work via substring matching; they cannot now,
+        // so they must be flagged rather than silently ignored.
+        assert!(is_unmatchable_allowlist_entry("/internal/"));
+        assert!(is_unmatchable_allowlist_entry("docs/api"));
 
-    #[test]
-    fn test_allowlist_bare_host_matches_host_and_subdomains() {
-        assert!(allowlist_matches("https://example.com/", "example.com"));
-        assert!(allowlist_matches("https://example.com", "example.com"));
-        assert!(allowlist_matches(
-            "http://example.com/deep/path",
-            "example.com"
-        ));
-        assert!(allowlist_matches(
-            "https://api.example.com/x",
-            "example.com"
-        ));
-        assert!(allowlist_matches(
-            "https://a.b.example.com/x",
-            "example.com"
-        ));
+        // Hosts and full URL prefixes are valid and must not be flagged.
+        assert!(!is_unmatchable_allowlist_entry("example.com"));
+        assert!(!is_unmatchable_allowlist_entry("api.example.com:8443"));
+        assert!(!is_unmatchable_allowlist_entry("https://example.com/docs"));
+        assert!(!is_unmatchable_allowlist_entry(""));
     }
 
     #[test]
@@ -1506,69 +1588,5 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].url, "https://example.com.attacker.net/");
-    }
-
-    #[test]
-    fn test_warn_on_unmatchable_allowlist_entries_identifies_path_fragments() {
-        // Path fragments used to work via substring matching; they cannot now,
-        // so they must be flagged rather than silently ignored.
-        assert!(is_unmatchable_allowlist_entry("/internal/"));
-        assert!(is_unmatchable_allowlist_entry("docs/api"));
-
-        // Hosts and full URL prefixes are valid and must not be flagged.
-        assert!(!is_unmatchable_allowlist_entry("example.com"));
-        assert!(!is_unmatchable_allowlist_entry("api.example.com:8443"));
-        assert!(!is_unmatchable_allowlist_entry("https://example.com/docs"));
-        assert!(!is_unmatchable_allowlist_entry(""));
-    }
-
-    #[test]
-    fn test_allowlist_bare_host_rejects_prefix_impersonation() {
-        assert!(!allowlist_matches("https://notexample.com/", "example.com"));
-        assert!(!allowlist_matches("https://myexample.com/x", "example.com"));
-    }
-
-    #[test]
-    fn test_allowlist_with_ports() {
-        // Bare-host entry with a port: the port is ignored on both sides.
-        assert!(allowlist_matches(
-            "https://example.com:8443/path",
-            "example.com:8443"
-        ));
-        assert!(allowlist_matches(
-            "https://example.com/path",
-            "example.com:8443"
-        ));
-        assert!(allowlist_matches(
-            "https://example.com:8443/path",
-            "example.com"
-        ));
-        assert!(!allowlist_matches(
-            "https://example.com.attacker.net:8443/",
-            "example.com:8443"
-        ));
-
-        // URL-prefix entry with a port still compares as a prefix.
-        assert!(allowlist_matches(
-            "http://localhost:3000/api/v1",
-            "http://localhost:3000/api"
-        ));
-        assert!(!allowlist_matches(
-            "http://localhost:3000/apixyz",
-            "http://localhost:3000/api"
-        ));
-    }
-
-    #[test]
-    fn test_allowlist_bare_host_does_not_match_parent_domain() {
-        // Allowlisting a subdomain must not allow the parent or a sibling.
-        assert!(!allowlist_matches(
-            "https://example.com/",
-            "api.example.com"
-        ));
-        assert!(!allowlist_matches(
-            "https://other.example.com/",
-            "api.example.com"
-        ));
     }
 }

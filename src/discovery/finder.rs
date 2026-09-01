@@ -346,7 +346,7 @@ mod tests {
         let mut extensions = HashSet::new();
         extensions.insert("md".to_string());
 
-        let expanded_paths = expand_paths(vec![base], true, Some(&extensions))?;
+        let expanded_paths = expand_paths(vec![base], true, Some(&extensions), false)?;
         let paths: Vec<&std::path::Path> = expanded_paths.iter().map(|p| p.as_path()).collect();
 
         let finder = Finder::default();
@@ -377,7 +377,7 @@ mod tests {
         let mut extensions = HashSet::new();
         extensions.insert("md".to_string());
 
-        let expanded_paths = expand_paths(vec![temp_dir.path()], true, Some(&extensions))?;
+        let expanded_paths = expand_paths(vec![temp_dir.path()], true, Some(&extensions), false)?;
         let paths: Vec<&std::path::Path> = expanded_paths.iter().map(|p| p.as_path()).collect();
 
         let finder = Finder::default();
