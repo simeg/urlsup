@@ -119,6 +119,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # cargo-audit's own dependencies can require a newer rustc than the
+      # toolchain this project pins, so install it on stable rather than
+      # letting rust-toolchain.toml apply here.
+      - name: Install stable toolchain for cargo-audit
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup override set stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit dependencies
+        run: cargo audit --deny warnings
