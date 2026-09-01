@@ -338,12 +338,12 @@ mod cli {
     async fn test_retry_mechanism() -> TestResult {
         let mut server = Server::new_async().await;
         // First request fails, subsequent requests succeed
-        let _m500 = server
+        let m500 = server
             .mock("GET", "/flaky")
             .with_status(500)
             .expect(1)
             .create();
-        let _m200 = server
+        let m200 = server
             .mock("GET", "/flaky")
             .with_status(200)
             .expect_at_least(1)
@@ -362,8 +362,13 @@ mod cli {
             .arg("--format")
             .arg("minimal");
 
-        // The retry mechanism should be exercised regardless of final success/failure
-        let _result = cmd.assert();
+        // The 500 must be retried and the follow-up 200 must win, so the run
+        // succeeds with no reported issues. Previously this test dropped its
+        // `Assert` and never verified either mock, so it passed even when 5xx
+        // responses were not retried at all.
+        cmd.assert().success().stdout("");
+        m500.assert();
+        m200.assert();
         Ok(())
     }
 
@@ -506,21 +511,20 @@ mod cli {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(urls.as_bytes())?;
 
-        let start = std::time::Instant::now();
+        // Assert the flag is accepted and does not change results. The actual
+        // pacing is verified in-process by
+        // `validator::tests::test_validate_urls__rate_limit_delays_requests`,
+        // which can measure it without process-startup noise; a wall-clock
+        // check here was previously so lenient (`elapsed >= 10`) that it passed
+        // with rate limiting removed entirely.
         let mut cmd = Command::cargo_bin(NAME)?;
         cmd.arg(file.path())
             .arg("--rate-limit")
-            .arg("200") // 200ms between requests
+            .arg("50")
             .arg("--format")
             .arg("minimal");
 
         cmd.assert().success().stdout("");
-
-        // Should take some time due to rate limiting, but timing can be variable in CI
-        // Just verify the command completed successfully with rate limiting enabled
-        let elapsed = start.elapsed().as_millis();
-        // Very lenient timing check - just ensure it didn't complete instantly
-        assert!(elapsed >= 10);
         Ok(())
     }
 
