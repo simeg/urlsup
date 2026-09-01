@@ -49,12 +49,10 @@ once_cell = { version = "1.21", default-features = false }
 indicatif = { version = "0.18", default-features = false }
 log = { version = "0.4", default-features = false }
 env_logger = { version = "0.11", default-features = false }
-term_size = { version = "0.3", default-features = false }
 
 # Performance optimization
 rayon = { version = "1.10", default-features = false }  # Parallel processing
 rustc-hash = { version = "2.0", default-features = false, features = ["std"] }  # Fast hashing
-memchr = { version = "2.7", default-features = false }  # SIMD-optimized string searching
 
 # Performance analysis
 sysinfo = { version = "0.36", default-features = false, features = ["system"] }  # System resource monitoring

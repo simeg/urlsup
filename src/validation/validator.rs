@@ -294,7 +294,7 @@ impl ValidateUrls for Validator {
                     let current = progress_counter.fetch_add(1, AtomicOrdering::Relaxed) + 1;
                     if let Some(prog) = progress_ref {
                         // Only update progress every 10 requests or on significant milestones
-                        if current % 10 == 0 || current == 1 {
+                        if current.is_multiple_of(10) || current == 1 {
                             prog.update_url_progress(current);
                         }
                     }
@@ -1333,7 +1333,7 @@ mod tests {
 
     #[test]
     fn test_validation_result_ordering() {
-        let mut results = vec![
+        let mut results = [
             ValidationResult {
                 url: "https://z.com".to_string(),
                 line: 1,
