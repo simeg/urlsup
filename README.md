@@ -46,7 +46,7 @@ cargo install urlsup
 
 ## 🚀 Usage
 ```bash
-urlsup - CLI to validate URLs in files [version 2.4.0]
+urlsup - CLI to validate URLs in files [version 2.5.0]
 
 Usage: urlsup [OPTIONS] [FILES]... [COMMAND]
 
