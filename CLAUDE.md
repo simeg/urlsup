@@ -69,8 +69,8 @@ The codebase follows a clean separation of concerns:
 4. **URL Extraction**: Uses `linkify` crate to extract actual URLs from matched lines with file-type-aware capacity estimation
 5. **Deduplication**: Removes duplicate URLs using optimized `FxHashSet` for maximum performance
 6. **Progress Reporting**: Shows colorful progress bars with batched updates during processing
-7. **Async Validation**: Uses `reqwest` with dynamic batch sizing, connection pooling, and token bucket rate limiting
-8. **Filtering**: Applies allowlist, exclude patterns, and allowed status code filters
+7. **Async Validation**: Uses `reqwest` with configured concurrency, connection pooling, and interval-based rate limiting
+8. **Filtering**: Applies allowlist (host/prefix matching), exclude patterns, and allowed status code filters
 9. **Grouped Reporting**: Displays results grouped by error type with colors and emojis
 
 ## Output Formats
@@ -102,17 +102,16 @@ The codebase includes several performance optimizations implemented in recent ve
 
 ### Memory Management
 - **File-type-aware capacity estimation** (`finder.rs`): Dynamic memory allocation based on file extensions (Markdown 2x, HTML 3x multipliers)
-- **Optimized URL deduplication** (`validator.rs`): Uses `FxHashSet` for 15-20% faster performance vs standard HashMap
+- **Optimized URL deduplication** (`validator.rs`): Uses `FxHashSet` rather than the default hasher
 - **Pre-allocation strategies**: Smart capacity sizing to avoid expensive reallocations
 
 ### Network Performance
-- **Dynamic batch sizing** (`validator.rs`): Batch sizes adapt to URL count and thread count (2-100 range)
+- **Configured concurrency** (`validator.rs`): `buffer_unordered` honours `--concurrency`, capped only by the URL count
 - **Connection pooling**: Explicit HTTP connection reuse configuration with idle timeouts
-- **Token bucket rate limiting**: Smooth request distribution vs simple sleep-based delays
-- **Batched progress updates**: Reduces atomic operations by updating progress every 10 requests
+- **Interval rate limiting** (`validator.rs`): `RateLimiter` reserves the next slot and sleeps until it, so there is no busy-polling and no initial burst
+- **Batched progress updates**: Updates progress every 10 requests, plus the first and last
 
 ### Async Processing
-- **Adaptive concurrency**: Optimal batch sizes based on system resources and workload
 - **Memory-efficient streaming**: Handles large URL sets without memory bloat
 - **Static resource reuse**: Eliminates repeated allocations for parsing components
 

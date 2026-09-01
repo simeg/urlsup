@@ -1,5 +1,101 @@
 # Changelog
 
+## 2.5.0 - 2026-09-01
+
+### 🔒 Correctness & Security Release
+
+This release fixes several bugs that caused wrong results — most importantly,
+valid URLs being reported as broken and `--concurrency` being silently ignored.
+It also clears 9 security advisories and removes ~1,700 lines of unreachable
+code.
+
+### 🐛 Bug Fixes
+
+#### Valid URLs no longer reported as broken
+- **All 2xx are treated as reachable**: previously only HTTP 200 counted, so a
+  valid 201, 202, 204 or 206 endpoint failed the build
+- The success counter and the exit code had disagreed with each other
+
+#### `--concurrency` is now honoured
+- The value was silently clamped to between 2 and 100 based on URL count, so
+  `--concurrency 50` over 8 URLs ran 2 at a time (measured: 4.07s → 1.70s)
+
+#### `--allowlist` is scoped to hosts and URL prefixes
+- `--allowlist example.com` previously also suppressed
+  `https://example.com.attacker.net/` via substring matching, hiding genuinely
+  broken links
+- Bare hosts match that host or a true subdomain; entries with a scheme match by
+  URL prefix at a path boundary
+- ⚠️ **Behaviour change**: bare *path fragments* (e.g. `/internal/`) no longer
+  match anything. Unmatchable entries now emit a warning naming the entry.
+
+#### `--rate-limit` is actually enforced
+- The token bucket allowed an initial burst equal to the thread count, so the
+  first N requests ignored the limit entirely
+- Retries are now paced too; worst case per URL is `(retry + 1) × rate_limit`
+
+#### Retries cover transient server responses
+- 429 and 5xx are now retried. Previously only transport errors were, so the two
+  cases most worth retrying were reported immediately. 4xx is never retried.
+
+#### Output correctness
+- **Valid JSON**: the report was hand-built without escaping, so a quote in a
+  filename, URL or error message produced unparseable output. Now serialised
+  with `serde`, single-line for both success and failure.
+- **`NO_COLOR` is respected**: 25 sites baked in escape codes before the
+  capability check
+- **stdout stays parseable**: the HTML-dashboard message and
+  `--show-performance` summary moved to stderr
+- **HTML escaping in the dashboard**: URLs and filenames come from scanned
+  documents and were interpolated raw
+
+#### Robustness
+- One unreadable file no longer aborts the whole run; it is reported on stderr
+  and skipped
+- A malformed `--proxy` is now a hard error rather than being silently ignored
+  while requests went out unproxied
+- Fixed an integer underflow that reported 18446744073709551606 valid URLs
+- `Display for ValidationResult` no longer panics
+- The progress bar no longer stalls short of the total
+
+### ✨ New Features
+
+- **`--no-ignore`**: check files that `.gitignore` / `.ignore` would exclude.
+  Previously gitignored files were silently skipped with no override, so a
+  build could go green on broken links.
+- **`--no-allow-timeout`, `--no-insecure`, `--no-show-performance`**: override
+  booleans set in `.urlsup.toml` for a single run
+
+### 🔐 Security
+
+- **9 RUSTSEC advisories cleared**, four in the TLS verification path:
+  `rustls-webpki` (reachable panic on malformed CRL, two name-constraint
+  bypasses, CRL authority), `h2`, `quinn-proto` ×2, `bytes`, `crossbeam-epoch`
+- Dropped the unmaintained `term_size` dependency (RUSTSEC-2020-0163)
+
+### 🧹 Maintenance
+
+- **~1,700 lines of unreachable code removed**: `rich.rs`, `theme.rs`, a
+  duplicate CLI parser, duplicate CLI validation, and dead SIMD helpers.
+  `URLSUP_THEME` and the adaptive theming the README advertised never had any
+  effect.
+- Dropped the now-unused `memchr` and `term_size` dependencies
+- `overflow-checks` enabled in release; it immediately caught a real underflow
+- MSRV declared (`rust-version = "1.88"`) and toolchain pinned
+- **`LICENSE` is now published** — it was excluded from the crate package
+- CI gained macOS/Windows, MSRV, release-build, packaging and `cargo audit` jobs
+- README cut from 834 to 391 lines, with the inaccurate performance claims and
+  the non-functional theming section removed
+
+### 🧪 Testing
+
+- All 8 property tests previously discarded their assertions and could not fail;
+  they now assert, which immediately exposed a test passing a duplicate flag and
+  failing with a usage error on every run
+- Property tests no longer depend on `httpbin.org` being reachable
+- Assertion-free tests reduced from 93 to 41; `output.rs` and `cli.rs` went to 0
+- No `process::exit` remains in library code, making validation paths testable
+
 ## 2.4.0 - 2025-08-10
 
 ### ⚡ Performance & User Experience Improvements

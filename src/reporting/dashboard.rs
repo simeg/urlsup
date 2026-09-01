@@ -19,6 +19,26 @@ mod dashboard_constants {
     pub const BYTES_TO_MB: f64 = 1_048_576.0;
 }
 
+/// Escape text for safe interpolation into HTML text/attribute content.
+///
+/// URLs, file names and error descriptions all originate from scanned
+/// documents, so they are untrusted input. Without this a file named
+/// `<img src=x onerror=...>.md` executed when the dashboard was opened.
+fn escape_html(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Data structure containing all information needed for dashboard generation
 #[derive(Debug, Clone)]
 pub struct DashboardData {
@@ -518,14 +538,14 @@ impl HtmlDashboard {
                         </div>
                     </div>
                     "#,
-                    result.url,
+                    escape_html(&result.url),
                     status_class,
                     status_text,
-                    result.file_name,
+                    escape_html(&result.file_name),
                     result.line,
                     if let Some(ref desc) = result.description {
                         if !desc.is_empty() {
-                            format!(" • {}", desc)
+                            format!(" • {}", escape_html(desc))
                         } else {
                             String::new()
                         }
@@ -696,6 +716,57 @@ mod tests {
     use std::error::Error;
     use std::time::Duration;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_escape_html_neutralizes_markup() {
+        assert_eq!(escape_html("<script>"), "&lt;script&gt;");
+        assert_eq!(escape_html("a & b"), "a &amp; b");
+        assert_eq!(escape_html(r#"say "hi""#), "say &quot;hi&quot;");
+        assert_eq!(escape_html("it's"), "it&#39;s");
+        assert_eq!(escape_html("plain text 123"), "plain text 123");
+        assert_eq!(escape_html(""), "");
+    }
+
+    #[test]
+    fn test_dashboard_escapes_untrusted_fields() -> Result<(), Box<dyn Error>> {
+        // URLs, file names and descriptions come from scanned documents, so a
+        // hostile repo could otherwise inject script into the dashboard.
+        let payload = "<img src=x onerror=alert(1)>";
+        let data = DashboardData {
+            metadata: DisplayMetadata {
+                total_validated: 1,
+                issues_found: 1,
+                files_processed: 1,
+                total_urls_found: 1,
+                unique_urls_found: 1,
+            },
+            results: vec![ValidationResult {
+                url: format!("https://example.com/{payload}"),
+                line: 1,
+                file_name: format!("{payload}.md"),
+                status_code: None,
+                description: Some(payload.to_string()),
+            }],
+            performance: None,
+            config: Config::default(),
+            timestamp: "2026-01-01 00:00:00 UTC".to_string(),
+        };
+
+        let out = NamedTempFile::new()?;
+        let path = out.path().to_string_lossy().to_string();
+        HtmlDashboard::generate_dashboard(&data, &path)?;
+        let html = std::fs::read_to_string(&path)?;
+
+        assert!(
+            !html.contains(payload),
+            "raw payload must not appear in the generated HTML"
+        );
+        assert!(
+            html.contains("&lt;img src=x onerror=alert(1)&gt;"),
+            "payload should appear escaped instead"
+        );
+        Ok(())
+    }
 
     fn create_test_metadata() -> DisplayMetadata {
         DisplayMetadata {

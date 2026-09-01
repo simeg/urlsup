@@ -37,6 +37,19 @@ pub fn colorize(text: &str, color: &str) -> String {
     }
 }
 
+/// Apply bold to text if the terminal supports it.
+///
+/// Use this instead of interpolating `Colors::BOLD` into a `format!` that is
+/// later passed to `colorize` -- that emits escapes even when formatting is
+/// disabled, because the codes are baked in before the capability check.
+pub fn bold(text: &str) -> String {
+    if supports_formatting() {
+        format!("{}{}{}", Colors::BOLD, text, Colors::RESET)
+    } else {
+        text.to_string()
+    }
+}
+
 /// Enhanced terminal capability detection
 pub fn supports_formatting() -> bool {
     use std::env;

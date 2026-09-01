@@ -7,9 +7,68 @@ use assert_cmd::prelude::*;
 use proptest::prelude::*;
 use std::io::Write;
 use std::process::Command;
+use std::sync::OnceLock;
 use tempfile::NamedTempFile;
 
 const NAME: &str = "urlsup";
+
+/// A local mock server shared by all property tests.
+///
+/// These tests used to point at `https://httpbin.org`, which made the suite
+/// depend on a third-party service being up and rate-limit-free. Started once
+/// and leaked deliberately so the URLs stay valid for the whole run.
+fn mock_server() -> &'static MockEndpoints {
+    static SERVER: OnceLock<MockEndpoints> = OnceLock::new();
+    SERVER.get_or_init(|| {
+        let mut server = mockito::Server::new();
+        let ok = server.url() + "/status/200";
+        let not_found = server.url() + "/status/404";
+        let mocks = vec![
+            server
+                .mock("GET", "/status/200")
+                .with_status(200)
+                .expect_at_least(0)
+                .create(),
+            server
+                .mock("GET", "/status/404")
+                .with_status(404)
+                .expect_at_least(0)
+                .create(),
+        ];
+        MockEndpoints {
+            ok,
+            not_found,
+            _server: Box::leak(Box::new(server)),
+            _mocks: mocks,
+        }
+    })
+}
+
+struct MockEndpoints {
+    ok: String,
+    not_found: String,
+    _server: &'static mut mockito::ServerGuard,
+    _mocks: Vec<mockito::Mock>,
+}
+
+/// Assert the process exited with a *known* status rather than discarding the
+/// result.
+///
+/// Every one of these tests previously ended in `let _ = cmd.assert().try_success();`,
+/// which drops the `Result` and so asserts nothing at all -- a panic (101) or a
+/// clap usage error (2) would pass silently. urlsup only ever returns 0 (no
+/// broken URLs) or 1 (broken URLs found / fatal error), so anything else is a bug.
+fn assert_clean_exit(cmd: &mut Command) {
+    let output = cmd.output().expect("failed to run urlsup");
+    let code = output.status.code();
+    assert!(
+        matches!(code, Some(0) | Some(1)),
+        "expected exit 0 or 1, got {:?}\nstdout: {}\nstderr: {}",
+        code,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 /// Generate valid-ish URLs for testing
 fn url_strategy() -> impl Strategy<Value = String> {
@@ -105,15 +164,13 @@ proptest! {
             .arg("minimal")
             .arg("--retry-delay")
             .arg("1")
-                    .arg("--retry-delay")
-            .arg("1")
             .arg("--timeout")
             .arg("1")  // Short timeout for property tests
             .arg("--allow-timeout");
 
         // Should not crash, regardless of content
         // Can succeed or fail, but should not panic or crash
-        let _ = cmd.assert().try_success();
+        assert_clean_exit(&mut cmd);
     }
 
     #[test]
@@ -128,14 +185,14 @@ proptest! {
         cmd.arg(file.path())
             .arg("--format")
             .arg("minimal")
-                    .arg("--retry-delay")
+            .arg("--retry-delay")
             .arg("1")
             .arg("--timeout")
             .arg("1")
             .arg("--allow-timeout");
 
         // Should handle malformed URLs gracefully
-        let _ = cmd.assert().try_success();
+        assert_clean_exit(&mut cmd);
     }
 
     #[test]
@@ -146,14 +203,12 @@ proptest! {
         retry_delay in 100u64..2000,
     ) {
         let mut file = NamedTempFile::new().unwrap();
-        file.write_all(b"https://httpbin.org/status/200").unwrap();
+        file.write_all(mock_server().ok.as_bytes()).unwrap();
 
         let mut cmd = Command::cargo_bin(NAME).unwrap();
         cmd.arg(file.path())
             .arg("--format")
             .arg("minimal")
-                    .arg("--retry-delay")
-            .arg("1")
             .arg("--timeout")
             .arg(timeout.to_string())
             .arg("--concurrency")
@@ -165,7 +220,7 @@ proptest! {
             .arg("--allow-timeout");
 
         // Should handle any reasonable configuration
-        let _ = cmd.assert().try_success();
+        assert_clean_exit(&mut cmd);
     }
 
     #[test]
@@ -173,7 +228,8 @@ proptest! {
         patterns in prop::collection::vec(r"[a-z]{3,10}", 1..5)
     ) {
         let mut file = NamedTempFile::new().unwrap();
-        file.write_all(b"https://example.com\nhttps://google.com").unwrap();
+        file.write_all(format!("{}\n{}", mock_server().ok, mock_server().not_found).as_bytes())
+            .unwrap();
 
         let allowlist = patterns.join(",");
 
@@ -183,14 +239,14 @@ proptest! {
             .arg("minimal")
             .arg("--allowlist")
             .arg(&allowlist)
-                    .arg("--retry-delay")
+            .arg("--retry-delay")
             .arg("1")
             .arg("--timeout")
             .arg("1")
             .arg("--allow-timeout");
 
         // Should handle any allowlist patterns without crashing
-        let _ = cmd.assert().try_success();
+        assert_clean_exit(&mut cmd);
     }
 
     #[test]
@@ -198,7 +254,7 @@ proptest! {
         codes in prop::collection::vec(100u16..600, 1..10)
     ) {
         let mut file = NamedTempFile::new().unwrap();
-        file.write_all(b"https://httpbin.org/status/404").unwrap();
+        file.write_all(mock_server().not_found.as_bytes()).unwrap();
 
         let status_codes = codes.iter()
             .map(|c| c.to_string())
@@ -211,14 +267,14 @@ proptest! {
             .arg("minimal")
             .arg("--allow-status")
             .arg(&status_codes)
-                    .arg("--retry-delay")
+            .arg("--retry-delay")
             .arg("1")
             .arg("--timeout")
             .arg("1")
             .arg("--allow-timeout");
 
         // Should handle any valid HTTP status codes
-        let _ = cmd.assert().try_success();
+        assert_clean_exit(&mut cmd);
     }
 
     #[test]
@@ -230,7 +286,7 @@ proptest! {
         // Create files with random extensions
         for (i, ext) in extensions.iter().enumerate() {
             let file_path = temp_dir.path().join(format!("test{}.{}", i, ext));
-            std::fs::write(&file_path, "https://example.com").unwrap();
+            std::fs::write(&file_path, &mock_server().ok).unwrap();
         }
 
         let extension_list = extensions.join(",");
@@ -242,14 +298,14 @@ proptest! {
             .arg(temp_dir.path())
             .arg("--format")
             .arg("minimal")
-                    .arg("--retry-delay")
+            .arg("--retry-delay")
             .arg("1")
             .arg("--timeout")
             .arg("1")
             .arg("--allow-timeout");
 
         // Should handle any file extensions
-        let _ = cmd.assert().try_success();
+        assert_clean_exit(&mut cmd);
     }
 
     #[test]
@@ -278,7 +334,7 @@ proptest! {
         cmd.arg(file.path())
             .arg("--format")
             .arg("minimal")
-                    .arg("--retry-delay")
+            .arg("--retry-delay")
             .arg("1")
             .arg("--timeout")
             .arg("1")
@@ -287,7 +343,7 @@ proptest! {
             .arg("5");
 
         // Should handle large files without issues
-        let _ = cmd.assert().try_success();
+        assert_clean_exit(&mut cmd);
     }
 
     #[test]
@@ -296,7 +352,8 @@ proptest! {
     ) {
         let mut file = NamedTempFile::new().unwrap();
         // Mix of valid and invalid URLs
-        file.write_all(b"https://httpbin.org/status/200\nhttps://httpbin.org/status/404").unwrap();
+        file.write_all(format!("{}\n{}", mock_server().ok, mock_server().not_found).as_bytes())
+            .unwrap();
 
         let mut cmd = Command::cargo_bin(NAME).unwrap();
         cmd.arg(file.path())
@@ -304,14 +361,14 @@ proptest! {
             .arg("minimal")
             .arg("--failure-threshold")
             .arg(threshold.to_string())
-                    .arg("--retry-delay")
+            .arg("--retry-delay")
             .arg("1")
             .arg("--timeout")
             .arg("1")
             .arg("--allow-timeout");
 
         // Should handle any threshold value
-        let _ = cmd.assert().try_success();
+        assert_clean_exit(&mut cmd);
         }
 }
 

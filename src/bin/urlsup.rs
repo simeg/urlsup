@@ -73,7 +73,7 @@ pub fn handle_special_commands(cli: &Cli) -> Option<i32> {
 /// Main URL validation logic extracted from main() for testing
 pub async fn run_urlsup_logic(cli: &Cli) -> Result<i32, Box<dyn std::error::Error>> {
     // Parse CLI arguments into CliConfig using the derive-based CLI
-    let cli_config = cli_to_config(cli);
+    let cli_config = cli_to_config(cli)?;
 
     // Load and merge configuration
     let config = load_and_merge_config(&cli_config)?;
@@ -179,7 +179,8 @@ pub async fn run_urlsup_logic(cli: &Cli) -> Result<i32, Box<dyn std::error::Erro
         if let Err(e) = HtmlDashboard::generate_dashboard(&dashboard_data, dashboard_path) {
             eprintln!("Warning: Failed to generate HTML dashboard: {}", e);
         } else {
-            println!("📊 HTML dashboard generated: {}", dashboard_path);
+            // stderr: stdout carries the machine-readable report
+            eprintln!("📊 HTML dashboard generated: {}", dashboard_path);
         }
     }
 
@@ -260,10 +261,15 @@ pub fn process_and_expand_files(
     validate_file_paths(&files)?;
 
     // Expand directories to file paths using configuration
-    let expanded_paths = expand_paths(files, cli.recursive, config.file_types_as_set().as_ref())
-        .inspect_err(|e| {
-            logging::log_error("Could not expand file paths", Some(e));
-        })?;
+    let expanded_paths = expand_paths(
+        files,
+        cli.recursive,
+        config.file_types_as_set().as_ref(),
+        config.no_ignore.unwrap_or(false),
+    )
+    .inspect_err(|e| {
+        logging::log_error("Could not expand file paths", Some(e));
+    })?;
 
     if expanded_paths.is_empty() {
         let error = "No files found to process";
@@ -370,13 +376,152 @@ pub async fn validate_urls(
     let start_time = std::time::Instant::now();
     let validation_results = validator
         .validate_urls_with_config(filtered_urls.to_vec(), config, progress)
-        .await;
+        .await?;
 
     // Log validation completion
     let duration = start_time.elapsed();
     logging::log_validation_complete(validation_results.len(), 0, duration.as_millis());
 
     Ok(validation_results)
+}
+
+/// Extract the host portion of a URL or a bare-host allowlist entry.
+///
+/// Strips any `scheme://` prefix, truncates at the first `/`, `?` or `#`,
+/// drops any `user[:password]@` userinfo prefix and any `:port` suffix.
+/// The result is lowercased so hosts compare case-insensitively.
+/// Returns `None` when no host can be determined.
+fn extract_host(url: &str) -> Option<String> {
+    // Strip the scheme, if present. Only `://` counts, so a bare host with a
+    // port (`example.com:8080`) is not mistaken for a scheme separator.
+    let after_scheme = match url.find("://") {
+        Some(idx) => &url[idx + 3..],
+        None => url,
+    };
+
+    // The authority ends at the first path, query or fragment delimiter.
+    let authority = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(after_scheme);
+
+    // Drop any `user[:password]@` prefix; the host is after the last `@`.
+    let host_port = match authority.rfind('@') {
+        Some(idx) => &authority[idx + 1..],
+        None => authority,
+    };
+
+    // Drop any `:port` suffix. Splitting on the first `:` is safe here because
+    // bracketed IPv6 literals are handled separately below.
+    let host = if let Some(stripped) = host_port.strip_prefix('[') {
+        // IPv6 literal: keep everything up to and including the closing bracket.
+        match stripped.find(']') {
+            Some(end) => &host_port[..end + 2],
+            None => host_port,
+        }
+    } else {
+        match host_port.find(':') {
+            Some(idx) => &host_port[..idx],
+            None => host_port,
+        }
+    };
+
+    // A trailing dot denotes a fully-qualified name and is equivalent to the
+    // dotless form. linkify already strips it from extracted URLs, so this is
+    // belt-and-braces for direct callers of this helper.
+    let host = host.strip_suffix('.').unwrap_or(host);
+
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_ascii_lowercase())
+    }
+}
+
+/// Determine whether `url` is covered by the allowlist entry `allowed`.
+///
+/// Two entry styles are supported, preserving the prefix-style usage that
+/// `--allowlist` has always allowed while closing the naive-substring hole:
+///
+/// * An entry with a scheme (e.g. `https://example.com/docs`) matches by URL
+///   prefix, but only at a path boundary. It matches `https://example.com/docs`
+///   and `https://example.com/docs/page`, and not `https://example.com/docsomething`.
+/// * A bare-host entry (e.g. `example.com`) matches that host exactly or any
+///   subdomain of it (`api.example.com`), and never `example.com.attacker.net`
+///   or `notexample.com`.
+///
+/// Host comparison is case-insensitive.
+fn allowlist_matches(url: &str, allowed: &str) -> bool {
+    let allowed = allowed.trim();
+    if allowed.is_empty() {
+        return false;
+    }
+
+    // Entries containing a scheme are treated as URL prefixes.
+    if allowed.contains("://") {
+        // Require the hosts to agree as a cheap guard before the prefix
+        // comparison. Note the `starts_with` below is a raw byte comparison, so
+        // a differing-case or userinfo-bearing URL is rejected regardless --
+        // this check does not normalise, it only fails faster.
+        match (extract_host(url), extract_host(allowed)) {
+            (Some(url_host), Some(allowed_host)) if url_host == allowed_host => {}
+            _ => return false,
+        }
+
+        if !url.starts_with(allowed) {
+            return false;
+        }
+
+        // Require a path boundary so `/docs` does not match `/docsomething`.
+        let rest = &url[allowed.len()..];
+        return rest.is_empty()
+            || allowed.ends_with('/')
+            || rest.starts_with('/')
+            || rest.starts_with('?')
+            || rest.starts_with('#');
+    }
+
+    // Otherwise treat the entry as a host (optionally with a port, which is
+    // ignored) and match the host exactly or as a parent domain.
+    let Some(url_host) = extract_host(url) else {
+        return false;
+    };
+    let Some(allowed_host) = extract_host(allowed) else {
+        return false;
+    };
+
+    url_host == allowed_host || url_host.ends_with(&format!(".{allowed_host}"))
+}
+
+/// Warn about allowlist entries that can never match.
+///
+/// Allowlist matching used to be a plain substring test, so a bare path
+/// fragment like `/internal/` or `docs/api` filtered any URL containing it.
+/// Entries are now hosts or URL prefixes, so those no longer match anything.
+/// That direction is fail-safe -- more failures get reported, not fewer -- but
+/// it would otherwise be silent, so say so explicitly.
+/// Whether an allowlist entry can never match: a bare path fragment rather
+/// than a host or a full URL prefix. A host cannot contain '/'.
+fn is_unmatchable_allowlist_entry(entry: &str) -> bool {
+    let entry = entry.trim();
+    !entry.is_empty() && !entry.contains("://") && entry.contains('/')
+}
+
+fn warn_on_unmatchable_allowlist_entries(allowlist: &[String]) {
+    for entry in allowlist {
+        let entry = entry.trim();
+        if entry.is_empty() || entry.contains("://") {
+            continue;
+        }
+
+        if is_unmatchable_allowlist_entry(entry) {
+            eprintln!(
+                "Warning: allowlist entry '{entry}' looks like a path fragment and will never \
+                 match. Entries must be a host (example.com) or a full URL prefix \
+                 (https://example.com/docs)."
+            );
+        }
+    }
 }
 
 /// Apply allowlist, status code, and timeout filters to validation results
@@ -392,10 +537,11 @@ pub fn apply_result_filters(
 
     // Apply allowlist filtering
     if let Some(ref allowlist) = config.allowlist {
+        warn_on_unmatchable_allowlist_entries(allowlist);
         filtered_results.retain(|result| {
             !allowlist
                 .iter()
-                .any(|allowed_url| result.url.contains(allowed_url))
+                .any(|allowed_url| allowlist_matches(&result.url, allowed_url))
         });
     }
 
@@ -458,8 +604,14 @@ pub fn display_final_results(
 /// Determine exit code based on failure threshold
 pub fn determine_exit_code(issues_found: usize, total_validated: usize, config: &Config) -> i32 {
     let should_fail = if let Some(threshold) = config.failure_threshold {
-        let failure_rate = (issues_found as f64 / total_validated as f64) * 100.0;
-        failure_rate > threshold
+        if total_validated == 0 {
+            // 0/0 would be NaN, and every NaN comparison is false. That happened
+            // to yield the right answer here, but only by accident.
+            false
+        } else {
+            let failure_rate = (issues_found as f64 / total_validated as f64) * 100.0;
+            failure_rate > threshold
+        }
     } else {
         issues_found > 0 // Default behavior - fail on any issues
     };
@@ -471,6 +623,7 @@ pub fn determine_exit_code(issues_found: usize, total_validated: usize, config: 
 #[allow(clippy::field_reassign_with_default)] // Test code for clarity
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
     use std::path::Path;
     use tempfile::TempDir;
@@ -482,6 +635,7 @@ mod tests {
             command: None,
             files: vec!["test.md".to_string()],
             recursive: false,
+            no_ignore: false,
             timeout: None,
             concurrency: None,
             include: None,
@@ -492,6 +646,7 @@ mod tests {
             retry_delay: None,
             rate_limit: None,
             allow_timeout: false,
+            no_allow_timeout: false,
             failure_threshold: None,
             quiet: false,
             verbose: false,
@@ -500,9 +655,11 @@ mod tests {
             user_agent: None,
             proxy: None,
             insecure: false,
+            no_insecure: false,
             config: None,
             no_config: false,
             show_performance: false,
+            no_show_performance: false,
             html_dashboard: None,
         }
     }
@@ -548,7 +705,11 @@ mod tests {
         }
     }
 
+    // Mutates process-global HOME; cargo runs tests in this binary on parallel
+    // threads, so it must not overlap with anything resolving a home-relative
+    // path.
     #[test]
+    #[serial]
     fn test_handle_special_commands_install_bash() {
         let temp_dir = TempDir::new().unwrap();
         let temp_home = temp_dir.path().to_str().unwrap();
@@ -1149,10 +1310,14 @@ mod tests {
         let mut config = Config::default();
         config.failure_threshold = Some(50.0);
 
-        // Edge case: 0 total URLs
-        let exit_code = determine_exit_code(0, 0, &config);
-        // This would result in NaN, but 0 issues should pass
-        assert_eq!(exit_code, 0);
+        // Edge case: 0 total URLs. 0/0 is NaN and every NaN comparison is
+        // false, so this used to pass only by accident; it is now guarded.
+        assert_eq!(determine_exit_code(0, 0, &config), 0);
+
+        // A zero threshold is the case where relying on NaN would be most
+        // fragile: `NaN > 0.0` is false, but so is any other NaN comparison.
+        config.failure_threshold = Some(0.0);
+        assert_eq!(determine_exit_code(0, 0, &config), 0);
     }
 
     #[test]
@@ -1195,5 +1360,233 @@ mod tests {
         // Should use default config when no_config is true
         let config = result.unwrap();
         assert_eq!(config.timeout, Config::default().timeout);
+    }
+
+    #[test]
+    fn test_allowlist_bare_host_rejects_suffix_impersonation() {
+        // Security regression: a naive substring match would allow this.
+        assert!(!allowlist_matches(
+            "https://example.com.attacker.net/",
+            "example.com"
+        ));
+        assert!(!allowlist_matches(
+            "https://example.com.attacker.net/path?a=b",
+            "example.com"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_bare_host_rejects_prefix_impersonation() {
+        assert!(!allowlist_matches("https://notexample.com/", "example.com"));
+        assert!(!allowlist_matches("https://myexample.com/x", "example.com"));
+    }
+
+    #[test]
+    fn test_allowlist_bare_host_matches_host_and_subdomains() {
+        assert!(allowlist_matches("https://example.com/", "example.com"));
+        assert!(allowlist_matches("https://example.com", "example.com"));
+        assert!(allowlist_matches(
+            "http://example.com/deep/path",
+            "example.com"
+        ));
+        assert!(allowlist_matches(
+            "https://api.example.com/x",
+            "example.com"
+        ));
+        assert!(allowlist_matches(
+            "https://a.b.example.com/x",
+            "example.com"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_bare_host_does_not_match_parent_domain() {
+        // Allowlisting a subdomain must not allow the parent or a sibling.
+        assert!(!allowlist_matches(
+            "https://example.com/",
+            "api.example.com"
+        ));
+        assert!(!allowlist_matches(
+            "https://other.example.com/",
+            "api.example.com"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_url_prefix_respects_path_boundary() {
+        assert!(allowlist_matches(
+            "https://example.com/docs",
+            "https://example.com/docs"
+        ));
+        assert!(allowlist_matches(
+            "https://example.com/docs/page",
+            "https://example.com/docs"
+        ));
+        assert!(!allowlist_matches(
+            "https://example.com/docsomething",
+            "https://example.com/docs"
+        ));
+        assert!(!allowlist_matches(
+            "https://example.com/other",
+            "https://example.com/docs"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_url_prefix_allows_query_and_fragment() {
+        assert!(allowlist_matches(
+            "https://example.com/docs?v=1",
+            "https://example.com/docs"
+        ));
+        assert!(allowlist_matches(
+            "https://example.com/docs#top",
+            "https://example.com/docs"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_url_prefix_with_trailing_slash() {
+        assert!(allowlist_matches(
+            "https://example.com/docs/page",
+            "https://example.com/docs/"
+        ));
+        assert!(allowlist_matches(
+            "https://example.com/docs/",
+            "https://example.com/docs/"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_url_prefix_requires_matching_host() {
+        // A prefix entry must not match a lookalike host even if the raw
+        // string prefix would otherwise line up.
+        assert!(!allowlist_matches(
+            "https://example.com.attacker.net/docs",
+            "https://example.com/docs"
+        ));
+        assert!(!allowlist_matches(
+            "http://example.com/docs",
+            "https://example.com/docs"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_host_matching_is_case_insensitive() {
+        assert!(allowlist_matches("https://EXAMPLE.COM/", "example.com"));
+        assert!(allowlist_matches("https://example.com/", "EXAMPLE.COM"));
+        assert!(allowlist_matches(
+            "https://API.Example.Com/x",
+            "example.com"
+        ));
+        assert!(!allowlist_matches(
+            "https://EXAMPLE.COM.attacker.net/",
+            "example.com"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_with_ports() {
+        // Bare-host entry with a port: the port is ignored on both sides.
+        assert!(allowlist_matches(
+            "https://example.com:8443/path",
+            "example.com:8443"
+        ));
+        assert!(allowlist_matches(
+            "https://example.com/path",
+            "example.com:8443"
+        ));
+        assert!(allowlist_matches(
+            "https://example.com:8443/path",
+            "example.com"
+        ));
+        assert!(!allowlist_matches(
+            "https://example.com.attacker.net:8443/",
+            "example.com:8443"
+        ));
+
+        // URL-prefix entry with a port still compares as a prefix.
+        assert!(allowlist_matches(
+            "http://localhost:3000/api/v1",
+            "http://localhost:3000/api"
+        ));
+        assert!(!allowlist_matches(
+            "http://localhost:3000/apixyz",
+            "http://localhost:3000/api"
+        ));
+    }
+
+    #[test]
+    fn test_allowlist_empty_entry_matches_nothing() {
+        assert!(!allowlist_matches("https://example.com/", ""));
+        assert!(!allowlist_matches("https://example.com/", "   "));
+    }
+
+    #[test]
+    fn test_extract_host_variants() {
+        assert_eq!(
+            extract_host("https://example.com/x"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(extract_host("example.com"), Some("example.com".to_string()));
+        assert_eq!(
+            extract_host("example.com:8080"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            extract_host("https://EXAMPLE.com"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            extract_host("https://user:pass@example.com/x"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            extract_host("https://example.com?q=1"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            extract_host("https://example.com#frag"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            extract_host("https://[::1]:8080/x"),
+            Some("[::1]".to_string())
+        );
+        assert_eq!(extract_host("https:///path"), None);
+        assert_eq!(extract_host(""), None);
+    }
+
+    #[test]
+    fn test_warn_on_unmatchable_allowlist_entries_identifies_path_fragments() {
+        // Path fragments used to work via substring matching; they cannot now,
+        // so they must be flagged rather than silently ignored.
+        assert!(is_unmatchable_allowlist_entry("/internal/"));
+        assert!(is_unmatchable_allowlist_entry("docs/api"));
+
+        // Hosts and full URL prefixes are valid and must not be flagged.
+        assert!(!is_unmatchable_allowlist_entry("example.com"));
+        assert!(!is_unmatchable_allowlist_entry("api.example.com:8443"));
+        assert!(!is_unmatchable_allowlist_entry("https://example.com/docs"));
+        assert!(!is_unmatchable_allowlist_entry(""));
+    }
+
+    #[test]
+    fn test_apply_result_filters_allowlist_does_not_suppress_lookalike_host() {
+        // End-to-end: a broken lookalike URL must still be reported.
+        let results = vec![ValidationResult {
+            url: "https://example.com.attacker.net/".to_string(),
+            line: 1,
+            file_name: "test.md".to_string(),
+            status_code: Some(404),
+            description: Some("Not Found".to_string()),
+        }];
+
+        let mut config = Config::default();
+        config.allowlist = Some(vec!["example.com".to_string()]);
+
+        let filtered = apply_result_filters(results, &config);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].url, "https://example.com.attacker.net/");
     }
 }

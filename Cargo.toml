@@ -1,20 +1,24 @@
 [package]
 name = "urlsup"
-version = "2.4.0"
+version = "2.5.0"
 description = "CLI to validate URLs in files"
 authors = ["Simon Egersand <s.egersand@gmail.com>"]
 keywords = ["cli", "ci", "github", "action", "links"]
+categories = ["command-line-utilities", "development-tools", "web-programming"]
 
 repository = "https://github.com/simeg/urlsup"
 homepage = "https://github.com/simeg/urlsup"
 documentation = "https://github.com/simeg/urlsup/blob/master/README.md"
 readme = "README.md"
 license = "MIT"
+rust-version = "1.88"  # floor set by transitive deps (globset, icu_*), not by our code
 edition = "2024"
 include = [
     "src/**/*",
     "Cargo.toml",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
 ]
 
 [dependencies]
@@ -49,12 +53,10 @@ once_cell = { version = "1.21", default-features = false }
 indicatif = { version = "0.18", default-features = false }
 log = { version = "0.4", default-features = false }
 env_logger = { version = "0.11", default-features = false }
-term_size = { version = "0.3", default-features = false }
 
 # Performance optimization
 rayon = { version = "1.10", default-features = false }  # Parallel processing
 rustc-hash = { version = "2.0", default-features = false, features = ["std"] }  # Fast hashing
-memchr = { version = "2.7", default-features = false }  # SIMD-optimized string searching
 
 # Performance analysis
 sysinfo = { version = "0.36", default-features = false, features = ["system"] }  # System resource monitoring
@@ -75,5 +77,5 @@ codegen-units = 1         # Single codegen unit for best cross-function optimiza
 panic = "abort"           # Fastest panic handling
 strip = true              # Remove debug symbols
 debug = false             # No debug info for fastest compilation and execution
-overflow-checks = false   # Disable runtime overflow checks for speed
+overflow-checks = true    # Catch arithmetic bugs; cost is negligible for a network-bound tool
 incremental = false       # Disable incremental compilation for better optimization

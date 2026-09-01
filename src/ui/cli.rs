@@ -2,6 +2,7 @@
 
 use crate::config::CliConfig;
 use crate::core::constants::{output_formats, timeouts};
+use crate::core::error::{Result, UrlsUpError};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -19,53 +20,7 @@ Example:
 
 	$ urlsup . --recursive --include md,txt
 
-Commands:
-  completion-generate                Generate shell completions
-  completion-install                 Install shell completions to standard location
-  config-wizard                      Run interactive configuration wizard
-  help                               Print this message or the help of the given subcommand(s)
-
-Core Options:
-  -r, --recursive                    Recursively process directories. Will skip files/directories listed in .gitignore
-  -t, --timeout <SECONDS>            Connection timeout in seconds (default: 5)
-      --concurrency <COUNT>          Concurrent requests (default: CPU cores)
-
-Filtering & Content:
-      --include <EXTENSIONS>         File extensions to process (e.g., md,html,txt)
-      --allowlist <URLS>             URLs to allow (comma-separated)
-      --allow-status <CODES>         Status codes to allow (comma-separated)
-      --exclude-pattern <REGEX>      URL patterns to exclude (regex)
-
-Retry & Rate Limiting:
-      --retry <COUNT>                Retry attempts for failed requests (default: 0)
-      --retry-delay <MS>             Delay between retries in ms (default: 1000)
-      --rate-limit <MS>              Delay between requests in ms (default: 0)
-      --allow-timeout                Allow URLs that timeout
-      --failure-threshold <PERCENT>  Fail only if more than X% URLs are broken (0-100)
-
-Output & Verbosity:
-  -q, --quiet                        Suppress progress output
-  -v, --verbose                      Enable verbose logging
-      --format <FORMAT>              Output format [default: text] [text|json|minimal]
-      --no-progress                  Disable progress bars
-
-Network & Security:
-      --user-agent <AGENT>           Custom User-Agent header
-      --proxy <URL>                  HTTP/HTTPS proxy URL
-      --insecure                     Skip SSL certificate verification
-
-Configuration:
-      --config <FILE>                Use specific config file
-      --no-config                    Ignore config files
-
-Performance Analysis:
-      --show-performance             Show memory usage and optimization suggestions
-      --html-dashboard <PATH>        Generate HTML dashboard report
-
-Options:
-  -h, --help                         Print help
-  -V, --version                      Print version
-{after-help}
+{all-args}{after-help}
 "
 )]
 pub struct Cli {
@@ -76,7 +31,7 @@ pub struct Cli {
     pub files: Vec<String>,
 
     // Core Options
-    /// Recursively process directories
+    /// Recursively process directories. Will skip files/directories listed in .gitignore
     #[arg(short = 'r', long, help_heading = "Core Options")]
     pub recursive: bool,
 
@@ -98,7 +53,7 @@ pub struct Cli {
     #[arg(long, value_name = "EXTENSIONS", help_heading = "Filtering & Content")]
     pub include: Option<String>,
 
-    /// URLs to allow (comma-separated)
+    /// Hosts or URL prefixes to allow (comma-separated)
     #[arg(long, value_name = "URLS", help_heading = "Filtering & Content")]
     pub allowlist: Option<String>,
 
@@ -109,6 +64,10 @@ pub struct Cli {
     /// URL patterns to exclude (regex)
     #[arg(long, value_name = "REGEX", help_heading = "Filtering & Content")]
     pub exclude_pattern: Vec<String>,
+
+    /// Do not respect .gitignore/.ignore files when recursing
+    #[arg(long, help_heading = "Filtering & Content")]
+    pub no_ignore: bool,
 
     // Retry & Rate Limiting
     /// Retry attempts for failed requests (default: 0)
@@ -126,6 +85,14 @@ pub struct Cli {
     /// Allow URLs that timeout
     #[arg(long, help_heading = "Retry & Rate Limiting")]
     pub allow_timeout: bool,
+
+    /// Do not allow URLs that timeout (overrides config file)
+    #[arg(
+        long,
+        conflicts_with = "allow_timeout",
+        help_heading = "Retry & Rate Limiting"
+    )]
+    pub no_allow_timeout: bool,
 
     /// Fail only if more than X% URLs are broken (0-100)
     #[arg(long, value_name = "PERCENT", help_heading = "Retry & Rate Limiting")]
@@ -161,6 +128,10 @@ pub struct Cli {
     #[arg(long, help_heading = "Network & Security")]
     pub insecure: bool,
 
+    /// Enforce SSL certificate verification (overrides config file)
+    #[arg(long, conflicts_with = "insecure", help_heading = "Network & Security")]
+    pub no_insecure: bool,
+
     // Configuration
     /// Use specific config file
     #[arg(long, value_name = "FILE", help_heading = "Configuration")]
@@ -174,6 +145,14 @@ pub struct Cli {
     /// Show memory usage and optimization suggestions
     #[arg(long, help_heading = "Performance Analysis")]
     pub show_performance: bool,
+
+    /// Do not show memory usage and optimization suggestions (overrides config file)
+    #[arg(
+        long,
+        conflicts_with = "show_performance",
+        help_heading = "Performance Analysis"
+    )]
+    pub no_show_performance: bool,
 
     /// Generate HTML dashboard report
     #[arg(long, value_name = "PATH", help_heading = "Performance Analysis")]
@@ -201,196 +180,17 @@ pub enum Commands {
     ConfigWizard,
 }
 
-/// Parse command line arguments into CliConfig structure
-pub fn parse_cli_args(matches: &clap::ArgMatches) -> CliConfig {
-    let mut cli_config = CliConfig::default();
-
-    // Core options
-    if let Some(timeout_str) = matches.get_one::<String>("timeout") {
-        let timeout: u64 = timeout_str.parse().unwrap_or_else(|_| {
-            eprintln!("Error: Timeout '{timeout_str}' is not a valid number. Expected a positive integer representing seconds.");
-            std::process::exit(1);
-        });
-        if timeout == 0 {
-            eprintln!(
-                "Error: Timeout cannot be 0. Expected a positive integer representing seconds."
-            );
-            std::process::exit(1);
-        }
-        if timeout > timeouts::MAX_TIMEOUT_SECONDS {
-            eprintln!(
-                "Warning: Timeout of {timeout} seconds is quite large. Consider using a smaller value for better user experience."
-            );
-        }
-        cli_config.timeout = Some(timeout);
-    }
-
-    // Filtering & inclusion
-    if let Some(include_str) = matches.get_one::<String>("include") {
-        cli_config.file_types = Some(
-            include_str
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect(),
-        );
-    }
-
-    if let Some(allowlist_str) = matches.get_one::<String>("allowlist") {
-        cli_config.allowlist = Some(
-            allowlist_str
-                .split(',')
-                .filter_map(|s| {
-                    if s.trim().is_empty() {
-                        None
-                    } else {
-                        Some(s.trim().to_string())
-                    }
-                })
-                .collect(),
-        );
-    }
-
-    if let Some(status_str) = matches.get_one::<String>("allow-status") {
-        cli_config.allowed_status_codes = Some(
-            status_str
-                .split(',')
-                .filter_map(|s| {
-                    if s.trim().is_empty() {
-                        None
-                    } else {
-                        s.trim()
-                            .parse::<u16>()
-                            .map_err(|_| {
-                                eprintln!(
-                                    "Error: Status code '{s}' is not a valid HTTP status code. Expected a number between 100-599."
-                                );
-                                std::process::exit(1);
-                            })
-                            .inspect(|&code| {
-                                if !(100..=599).contains(&code) {
-                                    eprintln!(
-                                        "Error: Status code '{code}' is not a valid HTTP status code. Expected a number between 100-599."
-                                    );
-                                    std::process::exit(1);
-                                }
-                            })
-                            .ok()
-                    }
-                })
-                .collect(),
-        );
-    }
-
-    if let Some(patterns) = matches.get_many::<String>("exclude-pattern") {
-        cli_config.exclude_patterns = Some(patterns.cloned().collect());
-    }
-
-    // Performance & behavior
-    if let Some(concurrency_str) = matches.get_one::<String>("concurrency") {
-        let concurrency: usize = concurrency_str.parse().unwrap_or_else(|_| {
-            eprintln!("Error: Concurrency '{concurrency_str}' is not a valid number. Expected a positive integer representing the number of concurrent requests.");
-            std::process::exit(1);
-        });
-        if concurrency == 0 {
-            eprintln!(
-                "Error: Concurrency cannot be 0. Expected a positive integer representing the number of concurrent requests."
-            );
-            std::process::exit(1);
-        }
-        if concurrency > 100 {
-            eprintln!(
-                "Warning: Concurrency of {concurrency} is quite high and may overwhelm servers. Consider using a smaller value."
-            );
-        }
-        cli_config.threads = Some(concurrency);
-    }
-
-    if let Some(retry_str) = matches.get_one::<String>("retry") {
-        cli_config.retry_attempts = Some(retry_str.parse().unwrap_or_else(|_| {
-            eprintln!("Error: Retry count '{retry_str}' is not a valid number. Expected a non-negative integer representing the number of retry attempts.");
-            std::process::exit(1);
-        }));
-    }
-
-    if let Some(retry_delay_str) = matches.get_one::<String>("retry-delay") {
-        cli_config.retry_delay = Some(retry_delay_str.parse().unwrap_or_else(|_| {
-            eprintln!("Error: Retry delay '{retry_delay_str}' is not a valid number. Expected a non-negative integer representing milliseconds.");
-            std::process::exit(1);
-        }));
-    }
-
-    if let Some(rate_limit_str) = matches.get_one::<String>("rate-limit") {
-        cli_config.rate_limit_delay = Some(rate_limit_str.parse().unwrap_or_else(|_| {
-            eprintln!("Error: Rate limit '{rate_limit_str}' is not a valid number. Expected a non-negative integer representing milliseconds between requests.");
-            std::process::exit(1);
-        }));
-    }
-
-    cli_config.allow_timeout = matches.get_flag("allow-timeout");
-
-    // Parse failure threshold
-    if let Some(threshold_str) = matches.get_one::<String>("failure-threshold") {
-        let threshold: f64 = threshold_str.parse().unwrap_or_else(|_| {
-            eprintln!("Error: Failure threshold '{threshold_str}' is not a valid number. Expected a value between 0-100.");
-            std::process::exit(1);
-        });
-        if !(0.0..=100.0).contains(&threshold) {
-            eprintln!(
-                "Error: Failure threshold {threshold}% is invalid. Expected a value between 0-100."
-            );
-            std::process::exit(1);
-        }
-        cli_config.failure_threshold = Some(threshold);
-    }
-
-    // Output & format
-    cli_config.quiet = matches.get_flag("quiet");
-    cli_config.verbose = matches.get_flag("verbose");
-    cli_config.no_progress = matches.get_flag("no-progress");
-
-    if let Some(format_str) = matches.get_one::<String>("format") {
-        cli_config.output_format = Some(format_str.clone());
-    }
-
-    // Network & security
-    if let Some(user_agent_str) = matches.get_one::<String>("user-agent") {
-        cli_config.user_agent = Some(user_agent_str.clone());
-    }
-
-    if let Some(proxy_str) = matches.get_one::<String>("proxy") {
-        cli_config.proxy = Some(proxy_str.clone());
-    }
-
-    cli_config.skip_ssl_verification = matches.get_flag("insecure");
-
-    // Configuration
-    if let Some(config_file) = matches.get_one::<String>("config") {
-        cli_config.config_file = Some(config_file.clone());
-    }
-
-    cli_config.no_config = matches.get_flag("no-config");
-
-    // Performance Analysis
-    cli_config.show_performance = matches.get_flag("show-performance");
-
-    if let Some(dashboard_path) = matches.get_one::<String>("html-dashboard") {
-        cli_config.html_dashboard_path = Some(dashboard_path.clone());
-    }
-
-    cli_config
-}
-
 /// Convert derive-based CLI arguments directly to CliConfig structure
-pub fn cli_to_config(cli: &Cli) -> CliConfig {
+pub fn cli_to_config(cli: &Cli) -> Result<CliConfig> {
     let mut cli_config = CliConfig::default();
 
     // Core options
     if let Some(timeout) = cli.timeout {
         if timeout == 0 {
-            eprintln!(
-                "Error: Timeout cannot be 0. Expected a positive integer representing seconds."
-            );
-            std::process::exit(1);
+            return Err(UrlsUpError::Config(
+                "Timeout cannot be 0. Expected a positive integer representing seconds."
+                    .to_string(),
+            ));
         }
         if timeout > timeouts::MAX_TIMEOUT_SECONDS {
             eprintln!(
@@ -426,47 +226,42 @@ pub fn cli_to_config(cli: &Cli) -> CliConfig {
     }
 
     if let Some(ref status_str) = cli.allow_status {
-        cli_config.allowed_status_codes = Some(
-            status_str
-                .split(',')
-                .filter_map(|s| {
-                    if s.trim().is_empty() {
-                        None
-                    } else {
-                        s.trim()
-                            .parse::<u16>()
-                            .map_err(|_| {
-                                eprintln!(
-                                    "Error: Status code '{s}' is not a valid HTTP status code. Expected a number between 100-599."
-                                );
-                                std::process::exit(1);
-                            })
-                            .inspect(|&code| {
-                                if !(100..=599).contains(&code) {
-                                    eprintln!(
-                                        "Error: Status code '{code}' is not a valid HTTP status code. Expected a number between 100-599."
-                                    );
-                                    std::process::exit(1);
-                                }
-                            })
-                            .ok()
-                    }
-                })
-                .collect(),
-        );
+        let mut codes = Vec::new();
+        for raw in status_str.split(',') {
+            let entry = raw.trim();
+            if entry.is_empty() {
+                continue;
+            }
+            // Message wording matches the pre-refactor output; `tests/cli.rs`
+            // asserts on it, and it is user-facing.
+            let code: u16 = entry.parse().map_err(|_| {
+                UrlsUpError::Config(format!(
+                    "Status code '{entry}' is not a valid HTTP status code. Expected a number between 100-599."
+                ))
+            })?;
+            if !(100..=599).contains(&code) {
+                return Err(UrlsUpError::Config(format!(
+                    "Status code '{code}' is not a valid HTTP status code. Expected a number between 100-599."
+                )));
+            }
+            codes.push(code);
+        }
+        cli_config.allowed_status_codes = Some(codes);
     }
 
     if !cli.exclude_pattern.is_empty() {
         cli_config.exclude_patterns = Some(cli.exclude_pattern.clone());
     }
 
+    cli_config.no_ignore = cli.no_ignore;
+
     // Performance & behavior
     if let Some(concurrency) = cli.concurrency {
         if concurrency == 0 {
-            eprintln!(
-                "Error: Concurrency cannot be 0. Expected a positive integer representing the number of concurrent requests."
-            );
-            std::process::exit(1);
+            return Err(UrlsUpError::Config(
+                "Concurrency cannot be 0. Expected a positive integer representing the number of concurrent requests."
+                    .to_string(),
+            ));
         }
         if concurrency > 100 {
             eprintln!(
@@ -489,14 +284,14 @@ pub fn cli_to_config(cli: &Cli) -> CliConfig {
     }
 
     cli_config.allow_timeout = cli.allow_timeout;
+    cli_config.no_allow_timeout = cli.no_allow_timeout;
 
     // Parse failure threshold
     if let Some(threshold) = cli.failure_threshold {
         if !(0.0..=100.0).contains(&threshold) {
-            eprintln!(
-                "Error: Failure threshold {threshold}% is invalid. Expected a value between 0-100."
-            );
-            std::process::exit(1);
+            return Err(UrlsUpError::Config(format!(
+                "Failure threshold {threshold}% is invalid. Expected a value between 0-100."
+            )));
         }
         cli_config.failure_threshold = Some(threshold);
     }
@@ -511,6 +306,7 @@ pub fn cli_to_config(cli: &Cli) -> CliConfig {
     cli_config.user_agent = cli.user_agent.clone();
     cli_config.proxy = cli.proxy.clone();
     cli_config.skip_ssl_verification = cli.insecure;
+    cli_config.no_skip_ssl_verification = cli.no_insecure;
 
     // Configuration
     cli_config.config_file = cli.config.clone();
@@ -518,73 +314,13 @@ pub fn cli_to_config(cli: &Cli) -> CliConfig {
 
     // Performance Analysis
     cli_config.show_performance = cli.show_performance;
+    cli_config.no_show_performance = cli.no_show_performance;
     cli_config.html_dashboard_path = cli.html_dashboard.clone();
 
-    cli_config
+    Ok(cli_config)
 }
 
 /// Validate CLI arguments using the derive-based CLI structure
-pub fn validate_cli_args(cli: &Cli) {
-    // Additional validation using the derive-based CLI
-    if let Some(timeout) = cli.timeout {
-        if timeout == 0 {
-            eprintln!(
-                "Error: Timeout cannot be 0. Expected a positive integer representing seconds."
-            );
-            std::process::exit(1);
-        }
-        if timeout > timeouts::MAX_TIMEOUT_SECONDS {
-            eprintln!(
-                "Warning: Timeout of {timeout} seconds is quite large. Consider using a smaller value for better user experience."
-            );
-        }
-    }
-
-    if let Some(concurrency) = cli.concurrency {
-        if concurrency == 0 {
-            eprintln!(
-                "Error: Concurrency cannot be 0. Expected a positive integer representing the number of concurrent requests."
-            );
-            std::process::exit(1);
-        }
-        if concurrency > 100 {
-            eprintln!(
-                "Warning: Concurrency of {concurrency} is quite high and may overwhelm servers. Consider using a smaller value."
-            );
-        }
-    }
-
-    // Validate status codes
-    if let Some(ref status_str) = cli.allow_status {
-        for code_str in status_str.split(',') {
-            if let Ok(code) = code_str.trim().parse::<u16>() {
-                if !(100..=599).contains(&code) {
-                    eprintln!(
-                        "Error: Status code '{code}' is not a valid HTTP status code. Expected a number between 100-599."
-                    );
-                    std::process::exit(1);
-                }
-            } else if !code_str.trim().is_empty() {
-                eprintln!(
-                    "Error: Status code '{}' is not a valid number. Expected a number between 100-599.",
-                    code_str.trim()
-                );
-                std::process::exit(1);
-            }
-        }
-    }
-
-    // Validate failure threshold
-    if let Some(threshold) = cli.failure_threshold
-        && !(0.0..=100.0).contains(&threshold)
-    {
-        eprintln!(
-            "Error: Failure threshold {threshold}% is invalid. Expected a value between 0-100."
-        );
-        std::process::exit(1);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -601,10 +337,12 @@ mod tests {
             allowlist: None,
             allow_status: None,
             exclude_pattern: vec![],
+            no_ignore: false,
             retry: None,
             retry_delay: None,
             rate_limit: None,
             allow_timeout: false,
+            no_allow_timeout: false,
             failure_threshold: None,
             quiet: false,
             verbose: false,
@@ -613,9 +351,11 @@ mod tests {
             user_agent: None,
             proxy: None,
             insecure: false,
+            no_insecure: false,
             config: None,
             no_config: false,
             show_performance: false,
+            no_show_performance: false,
             html_dashboard: None,
         }
     }
@@ -624,7 +364,7 @@ mod tests {
     fn test_cli_to_config_default() {
         let cli = create_default_cli();
 
-        let config = cli_to_config(&cli);
+        let config = cli_to_config(&cli).expect("valid CLI args");
 
         assert_eq!(config.timeout, None);
         assert_eq!(config.threads, None);
@@ -677,7 +417,7 @@ mod tests {
         cli.config = Some("config.toml".to_string());
         cli.no_config = true;
 
-        let config = cli_to_config(&cli);
+        let config = cli_to_config(&cli).expect("valid CLI args");
 
         assert_eq!(config.timeout, Some(60));
         assert_eq!(config.threads, Some(8));
@@ -721,7 +461,7 @@ mod tests {
         cli.proxy = Some("".to_string());
         cli.config = Some("".to_string());
 
-        let config = cli_to_config(&cli);
+        let config = cli_to_config(&cli).expect("valid CLI args");
 
         assert_eq!(config.file_types, Some(vec!["".to_string()]));
         assert_eq!(config.allowlist, Some(vec![])); // Empty strings filtered out
@@ -742,7 +482,7 @@ mod tests {
         cli.allowlist = Some("  example.com  ,  google.com  ".to_string());
         cli.allow_status = Some("  200  ,  404  ".to_string());
 
-        let config = cli_to_config(&cli);
+        let config = cli_to_config(&cli).expect("valid CLI args");
 
         assert_eq!(
             config.file_types,
@@ -761,7 +501,7 @@ mod tests {
         cli.allowlist = Some("example.com, , google.com".to_string());
         cli.allow_status = Some("200, , 404".to_string());
 
-        let config = cli_to_config(&cli);
+        let config = cli_to_config(&cli).expect("valid CLI args");
 
         assert_eq!(
             config.allowlist,
@@ -781,7 +521,7 @@ mod tests {
         cli.rate_limit = Some(0);
         cli.failure_threshold = Some(0.0);
 
-        let config = cli_to_config(&cli);
+        let config = cli_to_config(&cli).expect("valid CLI args");
 
         assert_eq!(config.timeout, Some(1));
         assert_eq!(config.threads, Some(1));
@@ -797,125 +537,219 @@ mod tests {
         let mut cli = create_default_cli();
         cli.failure_threshold = Some(100.0);
 
-        let config = cli_to_config(&cli);
+        let config = cli_to_config(&cli).expect("valid CLI args");
         assert_eq!(config.failure_threshold, Some(100.0));
     }
 
     #[test]
-    fn test_validate_cli_args_valid() {
+    fn test_cli_to_config_negating_flags() {
         let mut cli = create_default_cli();
-        cli.files = vec!["test.md".to_string()];
-        cli.timeout = Some(5);
-        cli.concurrency = Some(4);
-        cli.allow_status = Some("200,404".to_string());
-        cli.failure_threshold = Some(10.0);
+        cli.no_allow_timeout = true;
+        cli.no_insecure = true;
+        cli.no_show_performance = true;
 
-        // Should not panic
-        validate_cli_args(&cli);
+        let config = cli_to_config(&cli).expect("valid CLI args");
+
+        assert!(config.no_allow_timeout);
+        assert!(config.no_skip_ssl_verification);
+        assert!(config.no_show_performance);
+        // Positive counterparts stay unset
+        assert!(!config.allow_timeout);
+        assert!(!config.skip_ssl_verification);
+        assert!(!config.show_performance);
     }
 
     #[test]
-    fn test_validate_cli_args_high_timeout_warning() {
-        let mut cli = create_default_cli();
-        cli.files = vec!["test.md".to_string()];
-        cli.timeout = Some(3700); // > MAX_TIMEOUT_SECONDS
+    fn test_cli_to_config_negating_flags_default_false() {
+        let cli = create_default_cli();
 
-        // Should not panic, just print warning
-        validate_cli_args(&cli);
+        let config = cli_to_config(&cli).expect("valid CLI args");
+
+        assert!(!config.no_allow_timeout);
+        assert!(!config.no_skip_ssl_verification);
+        assert!(!config.no_show_performance);
     }
 
     #[test]
-    fn test_validate_cli_args_high_concurrency_warning() {
-        let mut cli = create_default_cli();
-        cli.files = vec!["test.md".to_string()];
-        cli.concurrency = Some(150); // > 100
+    fn test_cli_parses_negating_flags() {
+        let cli = Cli::try_parse_from([
+            "urlsup",
+            "README.md",
+            "--no-allow-timeout",
+            "--no-insecure",
+            "--no-show-performance",
+        ])
+        .expect("negating flags should parse on their own");
 
-        // Should not panic, just print warning
-        validate_cli_args(&cli);
+        assert!(cli.no_allow_timeout);
+        assert!(cli.no_insecure);
+        assert!(cli.no_show_performance);
     }
 
     #[test]
-    fn test_validate_cli_args_valid_status_codes() {
-        let mut cli = create_default_cli();
-        cli.files = vec!["test.md".to_string()];
-        cli.allow_status = Some("100,200,300,400,500,599".to_string());
+    fn test_cli_rejects_conflicting_allow_timeout_flags() {
+        let result = Cli::try_parse_from([
+            "urlsup",
+            "README.md",
+            "--allow-timeout",
+            "--no-allow-timeout",
+        ]);
 
-        // Should not panic
-        validate_cli_args(&cli);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn test_validate_cli_args_empty_status_codes() {
-        let mut cli = create_default_cli();
-        cli.files = vec!["test.md".to_string()];
-        cli.allow_status = Some("200, , 404".to_string());
+    fn test_cli_rejects_conflicting_insecure_flags() {
+        let result = Cli::try_parse_from(["urlsup", "README.md", "--insecure", "--no-insecure"]);
 
-        // Should not panic - empty status codes are ignored
-        validate_cli_args(&cli);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn test_validate_cli_args_valid_failure_threshold_boundaries() {
-        let mut cli = create_default_cli();
-        cli.files = vec!["test.md".to_string()];
-        cli.failure_threshold = Some(0.0);
+    fn test_cli_rejects_conflicting_show_performance_flags() {
+        let result = Cli::try_parse_from([
+            "urlsup",
+            "README.md",
+            "--show-performance",
+            "--no-show-performance",
+        ]);
 
-        // Should not panic
-        validate_cli_args(&cli);
-
-        let mut cli2 = create_default_cli();
-        cli2.files = vec!["test.md".to_string()];
-        cli2.failure_threshold = Some(100.0);
-
-        // Should not panic
-        validate_cli_args(&cli2);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn test_parse_cli_args_string_parsing() {
-        // Test individual parsing logic for include strings
-        let include_str = "md,html,txt";
-        let result: Vec<String> = include_str
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .collect();
-        assert_eq!(
-            result,
-            vec!["md".to_string(), "html".to_string(), "txt".to_string()]
+    fn test_cli_to_config_no_ignore() {
+        let mut cli = create_default_cli();
+        cli.no_ignore = true;
+
+        let config = cli_to_config(&cli).expect("valid CLI args");
+
+        assert!(config.no_ignore);
+    }
+
+    #[test]
+    fn test_cli_to_config_no_ignore_default_false() {
+        let cli = create_default_cli();
+
+        let config = cli_to_config(&cli).expect("valid CLI args");
+
+        assert!(!config.no_ignore);
+    }
+
+    #[test]
+    fn test_cli_parses_no_ignore() {
+        let cli = Cli::try_parse_from(["urlsup", ".", "--recursive", "--no-ignore"])
+            .expect("--no-ignore should parse");
+
+        assert!(cli.no_ignore);
+    }
+
+    #[test]
+    fn test_cli_to_config_rejects_zero_timeout() {
+        // Previously this called process::exit(1) from inside a library
+        // function, so the failure path could not be tested at all.
+        let mut cli = create_default_cli();
+        cli.timeout = Some(0);
+
+        let err = cli_to_config(&cli).expect_err("timeout 0 must be rejected");
+        assert!(err.to_string().contains("Timeout cannot be 0"), "{err}");
+    }
+
+    #[test]
+    fn test_cli_to_config_rejects_zero_concurrency() {
+        let mut cli = create_default_cli();
+        cli.concurrency = Some(0);
+
+        let err = cli_to_config(&cli).expect_err("concurrency 0 must be rejected");
+        assert!(err.to_string().contains("Concurrency cannot be 0"), "{err}");
+    }
+
+    #[test]
+    fn test_cli_to_config_rejects_out_of_range_status_code() {
+        for bad in ["99", "600", "1000"] {
+            let mut cli = create_default_cli();
+            cli.allow_status = Some(bad.to_string());
+
+            let Err(err) = cli_to_config(&cli) else {
+                panic!("status {bad} must be rejected");
+            };
+            assert!(
+                err.to_string().contains("not a valid HTTP status code"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cli_to_config_rejects_non_numeric_status_code() {
+        let mut cli = create_default_cli();
+        cli.allow_status = Some("200,abc".to_string());
+
+        let err = cli_to_config(&cli).expect_err("non-numeric status must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("not a valid HTTP status code"), "{msg}");
+        assert!(
+            msg.contains("abc"),
+            "message should name the bad entry: {msg}"
         );
+    }
 
-        // Test allowlist parsing with empty entries
-        let allowlist_str = "https://example.com,,https://test.com,";
-        let result: Vec<String> = allowlist_str
-            .split(',')
-            .filter_map(|s| {
-                if s.trim().is_empty() {
-                    None
-                } else {
-                    Some(s.trim().to_string())
-                }
-            })
-            .collect();
-        assert_eq!(
-            result,
-            vec![
-                "https://example.com".to_string(),
-                "https://test.com".to_string()
-            ]
-        );
+    #[test]
+    fn test_cli_to_config_accepts_status_code_boundaries() {
+        let mut cli = create_default_cli();
+        cli.allow_status = Some("100,599".to_string());
 
-        // Test status code parsing with empty entries
-        let status_str = "200,,301,302";
-        let result: Vec<u16> = status_str
-            .split(',')
-            .filter_map(|s| {
-                if s.trim().is_empty() {
-                    None
-                } else {
-                    s.trim().parse::<u16>().ok()
-                }
-            })
-            .collect();
-        assert_eq!(result, vec![200, 301, 302]);
+        let config = cli_to_config(&cli).expect("100 and 599 are valid");
+        assert_eq!(config.allowed_status_codes, Some(vec![100, 599]));
+    }
+
+    #[test]
+    fn test_cli_to_config_skips_empty_status_entries() {
+        let mut cli = create_default_cli();
+        cli.allow_status = Some("200, , 404,".to_string());
+
+        let config = cli_to_config(&cli).expect("empty entries are skipped");
+        assert_eq!(config.allowed_status_codes, Some(vec![200, 404]));
+    }
+
+    #[test]
+    fn test_cli_to_config_rejects_out_of_range_failure_threshold() {
+        for bad in [-1.0, 100.1, 1000.0] {
+            let mut cli = create_default_cli();
+            cli.failure_threshold = Some(bad);
+
+            let err = cli_to_config(&cli).expect_err("threshold must be 0-100");
+            assert!(err.to_string().contains("Failure threshold"), "{err}");
+        }
+    }
+
+    #[test]
+    fn test_cli_to_config_accepts_failure_threshold_boundaries() {
+        for good in [0.0, 50.0, 100.0] {
+            let mut cli = create_default_cli();
+            cli.failure_threshold = Some(good);
+
+            let config = cli_to_config(&cli).expect("0-100 inclusive is valid");
+            assert_eq!(config.failure_threshold, Some(good));
+        }
+    }
+
+    #[test]
+    fn test_cli_to_config_large_timeout_is_a_warning_not_an_error() {
+        // Over MAX_TIMEOUT_SECONDS warns on stderr but must still succeed.
+        let mut cli = create_default_cli();
+        cli.timeout = Some(timeouts::MAX_TIMEOUT_SECONDS + 1);
+
+        let config = cli_to_config(&cli).expect("a large timeout is allowed");
+        assert_eq!(config.timeout, Some(timeouts::MAX_TIMEOUT_SECONDS + 1));
+    }
+
+    #[test]
+    fn test_cli_to_config_high_concurrency_is_a_warning_not_an_error() {
+        let mut cli = create_default_cli();
+        cli.concurrency = Some(150);
+
+        let config = cli_to_config(&cli).expect("high concurrency is allowed");
+        assert_eq!(config.threads, Some(150));
     }
 }

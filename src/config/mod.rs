@@ -27,6 +27,9 @@ pub struct Config {
     /// File extensions to process
     pub file_types: Option<Vec<String>>,
 
+    /// Ignore .gitignore/.ignore files when walking directories recursively
+    pub no_ignore: Option<bool>,
+
     /// URL patterns to exclude (regex)
     pub exclude_patterns: Option<Vec<String>>,
 
@@ -80,6 +83,7 @@ impl Default for Config {
             threads: None, // Will default to CPU core count
             allow_timeout: Some(false),
             file_types: None,
+            no_ignore: Some(false),
             exclude_patterns: None,
             allowlist: None,
             allowed_status_codes: None,
@@ -163,6 +167,9 @@ impl Config {
         if let Some(ref exclude_patterns) = cli_config.exclude_patterns {
             self.exclude_patterns = Some(exclude_patterns.clone());
         }
+        if cli_config.no_ignore {
+            self.no_ignore = Some(true);
+        }
 
         // Performance & behavior
         if let Some(threads) = cli_config.threads {
@@ -177,8 +184,13 @@ impl Config {
         if let Some(rate_limit_delay) = cli_config.rate_limit_delay {
             self.rate_limit_delay = Some(rate_limit_delay);
         }
+        // Negating flags are checked last so they take precedence over the
+        // positive flag; if neither is passed the config file value is kept.
         if cli_config.allow_timeout {
             self.allow_timeout = Some(true);
+        }
+        if cli_config.no_allow_timeout {
+            self.allow_timeout = Some(false);
         }
         if let Some(threshold) = cli_config.failure_threshold {
             self.failure_threshold = Some(threshold);
@@ -202,10 +214,16 @@ impl Config {
         if cli_config.skip_ssl_verification {
             self.skip_ssl_verification = Some(true);
         }
+        if cli_config.no_skip_ssl_verification {
+            self.skip_ssl_verification = Some(false);
+        }
 
         // Performance Analysis
         if cli_config.show_performance {
             self.show_performance = Some(true);
+        }
+        if cli_config.no_show_performance {
+            self.show_performance = Some(false);
         }
         if let Some(ref dashboard_path) = cli_config.html_dashboard_path {
             self.html_dashboard_path = Some(dashboard_path.clone());
@@ -337,6 +355,7 @@ pub struct CliConfig {
     pub allowlist: Option<Vec<String>>,         // --allowlist
     pub allowed_status_codes: Option<Vec<u16>>, // --allow-status
     pub exclude_patterns: Option<Vec<String>>,  // --exclude-pattern
+    pub no_ignore: bool,                        // --no-ignore
 
     // Performance & behavior
     pub threads: Option<usize>,         // --concurrency (was threads)
@@ -344,6 +363,7 @@ pub struct CliConfig {
     pub retry_delay: Option<u64>,       // --retry-delay
     pub rate_limit_delay: Option<u64>,  // --rate-limit
     pub allow_timeout: bool,            // --allow-timeout
+    pub no_allow_timeout: bool,         // --no-allow-timeout
     pub failure_threshold: Option<f64>, // --failure-threshold
 
     // Output & format
@@ -353,9 +373,10 @@ pub struct CliConfig {
     pub no_progress: bool,             // --no-progress
 
     // Network & security
-    pub user_agent: Option<String>,  // --user-agent
-    pub proxy: Option<String>,       // --proxy
-    pub skip_ssl_verification: bool, // --insecure
+    pub user_agent: Option<String>,     // --user-agent
+    pub proxy: Option<String>,          // --proxy
+    pub skip_ssl_verification: bool,    // --insecure
+    pub no_skip_ssl_verification: bool, // --no-insecure
 
     // Configuration
     pub config_file: Option<String>, // --config
@@ -363,6 +384,7 @@ pub struct CliConfig {
 
     // Performance Analysis
     pub show_performance: bool,              // --show-performance
+    pub no_show_performance: bool,           // --no-show-performance
     pub html_dashboard_path: Option<String>, // --html-dashboard
 }
 
@@ -569,11 +591,13 @@ mod tests {
             allowlist: Some(vec!["example.com".to_string()]),
             allowed_status_codes: Some(vec![404, 429]),
             exclude_patterns: Some(vec![r".*\.local$".to_string()]),
+            no_ignore: false,
             threads: Some(8),
             retry_attempts: Some(3),
             retry_delay: Some(2000),
             rate_limit_delay: Some(100),
             allow_timeout: true,
+            no_allow_timeout: false,
             quiet: true,
             verbose: true,
             output_format: Some(output_formats::JSON.to_string()),
@@ -581,10 +605,12 @@ mod tests {
             user_agent: Some("test-agent".to_string()),
             proxy: Some("http://proxy.test:8080".to_string()),
             skip_ssl_verification: true,
+            no_skip_ssl_verification: false,
             config_file: Some("/path/to/config".to_string()),
             no_config: true,
             failure_threshold: Some(15.0),
             show_performance: false,
+            no_show_performance: false,
             html_dashboard_path: None,
         };
 
@@ -651,6 +677,225 @@ mod tests {
         assert!(!cli_config.skip_ssl_verification);
         assert_eq!(cli_config.config_file, None);
         assert!(!cli_config.no_config);
+        assert!(!cli_config.no_allow_timeout);
+        assert!(!cli_config.no_skip_ssl_verification);
+        assert!(!cli_config.no_show_performance);
+    }
+
+    #[test]
+    fn test_merge_no_allow_timeout_overrides_config_file() {
+        let mut config = Config {
+            allow_timeout: Some(true),
+            ..Default::default()
+        };
+
+        let cli_config = CliConfig {
+            no_allow_timeout: true,
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&cli_config);
+
+        assert_eq!(config.allow_timeout, Some(false));
+    }
+
+    #[test]
+    fn test_merge_allow_timeout_untouched_when_no_cli_flag() {
+        let mut config = Config {
+            allow_timeout: Some(true),
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&CliConfig::default());
+
+        assert_eq!(config.allow_timeout, Some(true));
+    }
+
+    #[test]
+    fn test_merge_allow_timeout_from_cli_only() {
+        let mut config = Config::default();
+
+        let cli_config = CliConfig {
+            allow_timeout: true,
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&cli_config);
+
+        assert_eq!(config.allow_timeout, Some(true));
+    }
+
+    #[test]
+    fn test_merge_no_skip_ssl_verification_overrides_config_file() {
+        let mut config = Config {
+            skip_ssl_verification: Some(true),
+            ..Default::default()
+        };
+
+        let cli_config = CliConfig {
+            no_skip_ssl_verification: true,
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&cli_config);
+
+        assert_eq!(config.skip_ssl_verification, Some(false));
+    }
+
+    #[test]
+    fn test_merge_skip_ssl_verification_untouched_when_no_cli_flag() {
+        let mut config = Config {
+            skip_ssl_verification: Some(true),
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&CliConfig::default());
+
+        assert_eq!(config.skip_ssl_verification, Some(true));
+    }
+
+    #[test]
+    fn test_merge_skip_ssl_verification_from_cli_only() {
+        let mut config = Config::default();
+
+        let cli_config = CliConfig {
+            skip_ssl_verification: true,
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&cli_config);
+
+        assert_eq!(config.skip_ssl_verification, Some(true));
+    }
+
+    #[test]
+    fn test_merge_no_show_performance_overrides_config_file() {
+        let mut config = Config {
+            show_performance: Some(true),
+            ..Default::default()
+        };
+
+        let cli_config = CliConfig {
+            no_show_performance: true,
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&cli_config);
+
+        assert_eq!(config.show_performance, Some(false));
+    }
+
+    #[test]
+    fn test_merge_show_performance_untouched_when_no_cli_flag() {
+        let mut config = Config {
+            show_performance: Some(true),
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&CliConfig::default());
+
+        assert_eq!(config.show_performance, Some(true));
+    }
+
+    #[test]
+    fn test_merge_show_performance_from_cli_only() {
+        let mut config = Config::default();
+
+        let cli_config = CliConfig {
+            show_performance: true,
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&cli_config);
+
+        assert_eq!(config.show_performance, Some(true));
+    }
+
+    #[test]
+    fn test_config_default_no_ignore_is_false() {
+        let config = Config::default();
+
+        assert_eq!(config.no_ignore, Some(false));
+    }
+
+    #[test]
+    fn test_merge_no_ignore_from_cli_only() {
+        let mut config = Config::default();
+
+        let cli_config = CliConfig {
+            no_ignore: true,
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&cli_config);
+
+        assert_eq!(config.no_ignore, Some(true));
+    }
+
+    #[test]
+    fn test_merge_no_ignore_untouched_when_no_cli_flag() {
+        let mut config = Config {
+            no_ignore: Some(true),
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&CliConfig::default());
+
+        assert_eq!(config.no_ignore, Some(true));
+    }
+
+    #[test]
+    fn test_merge_negation_wins_over_positive_flag() {
+        // Defense in depth: clap rejects this combination, but if both ever
+        // reach merge_with_cli the negation must take precedence.
+        let mut config = Config {
+            allow_timeout: Some(true),
+            skip_ssl_verification: Some(true),
+            show_performance: Some(true),
+            ..Default::default()
+        };
+
+        let cli_config = CliConfig {
+            allow_timeout: true,
+            no_allow_timeout: true,
+            skip_ssl_verification: true,
+            no_skip_ssl_verification: true,
+            show_performance: true,
+            no_show_performance: true,
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&cli_config);
+
+        assert_eq!(config.allow_timeout, Some(false));
+        assert_eq!(config.skip_ssl_verification, Some(false));
+        assert_eq!(config.show_performance, Some(false));
+    }
+
+    #[test]
+    fn test_merge_negation_from_config_file_loaded_toml() -> Result<()> {
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(
+            b"allow_timeout = true\nskip_ssl_verification = true\nshow_performance = true",
+        )?;
+
+        let mut config = Config::load_from_file(file.path())?;
+        assert_eq!(config.allow_timeout, Some(true));
+
+        let cli_config = CliConfig {
+            no_allow_timeout: true,
+            no_skip_ssl_verification: true,
+            no_show_performance: true,
+            ..Default::default()
+        };
+
+        config.merge_with_cli(&cli_config);
+
+        assert_eq!(config.allow_timeout, Some(false));
+        assert_eq!(config.skip_ssl_verification, Some(false));
+        assert_eq!(config.show_performance, Some(false));
+
+        Ok(())
     }
 
     #[test]

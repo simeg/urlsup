@@ -28,7 +28,7 @@ build: ## Build debug version of the binary
 check: ## Check if the project compiles (in release mode) without building
 	@$(CARGO) check --release --all-targets
 
-ci: check lint clippy test ## Run all CI checks (lint, clippy, test)
+ci: check lint clippy test audit ## Run all CI checks (compile, fmt, clippy, tests, security audit)
 
 clippy: ## Run clippy linter with strict warnings
 	$(CARGO) clippy --all-targets --all-features -- -D warnings
@@ -61,4 +61,4 @@ release: ## Build optimized release version
 	@$(CARGO) build --release
 
 test: ## Run all tests with output
-	@RUST_LOG=error,urlsup=debug $(CARGO) test -- --nocapture
+	@RUST_LOG=error,urlsup=debug $(CARGO) test --all-features -- --nocapture

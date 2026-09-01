@@ -46,8 +46,29 @@ pub fn install_completion(shell: clap_complete::Shell) -> Result<String, String>
 fn get_completion_directory(shell: clap_complete::Shell) -> Result<PathBuf, String> {
     use std::fs;
 
-    let home =
-        std::env::var("HOME").map_err(|_| "HOME environment variable not set".to_string())?;
+    // Shells that cannot be installed into are rejected before the home
+    // lookup: on Windows `HOME` is usually unset (it is `USERPROFILE`), so
+    // checking it first reported "HOME environment variable not set" for
+    // PowerShell and Elvish instead of the specific reason.
+    match shell {
+        clap_complete::Shell::PowerShell => {
+            return Err(
+                "PowerShell completion installation not supported. Use 'urlsup completion-generate powershell' and add to your profile manually."
+                    .to_string(),
+            );
+        }
+        clap_complete::Shell::Elvish => {
+            return Err(
+                "Elvish completion installation not supported. Use 'urlsup completion-generate elvish' and add to rc.elv manually."
+                    .to_string(),
+            );
+        }
+        _ => {}
+    }
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| "HOME environment variable not set".to_string())?;
 
     match shell {
         clap_complete::Shell::Bash => {
@@ -69,7 +90,8 @@ fn get_completion_directory(shell: clap_complete::Shell) -> Result<PathBuf, Stri
             }
 
             // Fallback: create the standard location
-            let fallback = PathBuf::from(format!("{home}/.local/share/bash-completion/completions"));
+            let fallback =
+                PathBuf::from(format!("{home}/.local/share/bash-completion/completions"));
             fs::create_dir_all(&fallback)
                 .map_err(|e| format!("Failed to create completion directory: {e}"))?;
             Ok(fallback)
@@ -105,12 +127,7 @@ fn get_completion_directory(shell: clap_complete::Shell) -> Result<PathBuf, Stri
                 .map_err(|e| format!("Failed to create fish completions directory: {e}"))?;
             Ok(path)
         }
-        clap_complete::Shell::PowerShell => Err(
-            "PowerShell completion installation not supported. Use 'urlsup completion-generate powershell' and add to your profile manually.".to_string(),
-        ),
-        clap_complete::Shell::Elvish => Err(
-            "Elvish completion installation not supported. Use 'urlsup completion-generate elvish' and add to rc.elv manually.".to_string(),
-        ),
+        // PowerShell and Elvish are handled above, before the home lookup.
         _ => Err(format!("Unsupported shell: {shell:?}")),
     }
 }
@@ -735,27 +752,33 @@ mod tests {
     #[test]
     #[serial]
     fn test_install_completion_no_home() {
-        // Save original HOME
+        // Both sources must be cleared: the home directory is looked up as
+        // HOME with a USERPROFILE fallback, since Windows sets the latter.
         let original_home = std::env::var("HOME").ok();
+        let original_userprofile = std::env::var("USERPROFILE").ok();
 
-        // Remove HOME temporarily
         unsafe {
             std::env::remove_var("HOME");
+            std::env::remove_var("USERPROFILE");
         }
 
         let result = install_completion(clap_complete::Shell::Bash);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("HOME environment variable not set")
-        );
 
-        // Restore HOME
-        if let Some(home) = original_home {
-            unsafe {
+        // Restore before asserting so a failure cannot leak the cleared
+        // environment into other tests.
+        unsafe {
+            if let Some(home) = original_home {
                 std::env::set_var("HOME", home);
             }
+            if let Some(userprofile) = original_userprofile {
+                std::env::set_var("USERPROFILE", userprofile);
+            }
         }
+
+        let err = result.expect_err("no home directory should be an error");
+        assert!(
+            err.contains("HOME environment variable not set"),
+            "unexpected error: {err}"
+        );
     }
 }

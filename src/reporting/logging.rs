@@ -1,16 +1,27 @@
 use crate::config::Config;
+use crate::core::constants::timeouts;
 use log::{debug, error, info, warn};
 use std::path::Path;
 
-/// Initialize the logger with appropriate level based on verbosity
-pub fn init_logger(verbose: bool, quiet: bool) {
-    let level = if quiet {
+/// Pick the log level for a verbose/quiet combination.
+///
+/// Extracted so the precedence is testable; `init_logger` itself installs a
+/// process-global logger and returns nothing, so it can only be smoke-tested.
+/// Note `quiet` wins over `verbose`.
+pub fn log_level_for(verbose: bool, quiet: bool) -> log::LevelFilter {
+    if quiet {
         log::LevelFilter::Off
     } else if verbose {
         log::LevelFilter::Debug
     } else {
-        log::LevelFilter::Off // Only show structured logs in verbose mode
-    };
+        // Structured logs are opt-in via --verbose.
+        log::LevelFilter::Off
+    }
+}
+
+/// Initialize the logger with appropriate level based on verbosity
+pub fn init_logger(verbose: bool, quiet: bool) {
+    let level = log_level_for(verbose, quiet);
 
     // Use try_init() to avoid panicking if logger is already initialized (e.g., in tests)
     let _ = env_logger::Builder::from_default_env()
@@ -25,10 +36,12 @@ pub fn init_logger(verbose: bool, quiet: bool) {
 
 /// Log configuration information
 pub fn log_config_info(config: &Config, actual_threads: usize) {
-    let timeout = config.timeout.unwrap_or(30);
+    let timeout = config.timeout.unwrap_or(timeouts::DEFAULT_TIMEOUT_SECONDS);
     let allow_timeout = config.allow_timeout.unwrap_or(false);
     let retry_attempts = config.retry_attempts.unwrap_or(0);
-    let retry_delay = config.retry_delay.unwrap_or(1000);
+    let retry_delay = config
+        .retry_delay
+        .unwrap_or(timeouts::DEFAULT_RETRY_DELAY_MS);
     let rate_limit_delay = config.rate_limit_delay.unwrap_or(0);
     let use_head_requests = config.use_head_requests.unwrap_or(false);
     let skip_ssl_verification = config.skip_ssl_verification.unwrap_or(false);
@@ -60,21 +73,26 @@ pub fn log_validation_start(url_count: usize) {
 }
 
 /// Log validation completion
+/// Number of URLs that validated cleanly.
+///
+/// `issues` should never exceed `url_count`, but saturate rather than
+/// underflow: with overflow-checks on that panicked, and before that it
+/// silently reported 18446744073709551606 valid URLs.
+pub fn valid_url_count(url_count: usize, issues: usize) -> usize {
+    url_count.saturating_sub(issues)
+}
+
 pub fn log_validation_complete(url_count: usize, issues: usize, duration_ms: u128) {
+    let valid = valid_url_count(url_count, issues);
     if issues == 0 {
         info!(
             "✅ Validation complete: {}/{} URLs valid ({}ms)",
-            url_count - issues,
-            url_count,
-            duration_ms
+            valid, url_count, duration_ms
         );
     } else {
         warn!(
             "❌ Validation complete: {}/{} URLs valid, {} issues found ({}ms)",
-            url_count - issues,
-            url_count,
-            issues,
-            duration_ms
+            valid, url_count, issues, duration_ms
         );
     }
 }
@@ -104,35 +122,38 @@ pub fn log_warning(message: &str) {
 
 #[cfg(test)]
 mod tests {
+    //! Most functions here wrap `log::` macros and return `()`, so there is
+    //! nothing to assert without installing a log-capture harness. Those tests
+    //! are deliberately smoke tests -- they prove the call path does not panic
+    //! on the inputs given. Logic that *is* assertable (log level selection)
+    //! is tested directly via `log_level_for`.
+
     use super::*;
     use std::io;
 
     #[test]
-    fn test_logger_initialization_verbose() {
-        // Test that verbose mode initialization works correctly
+    fn test_log_level_for_precedence() {
+        use log::LevelFilter;
+
+        // quiet wins over verbose
+        assert_eq!(log_level_for(true, true), LevelFilter::Off);
+        assert_eq!(log_level_for(false, true), LevelFilter::Off);
+        // verbose alone enables debug logging
+        assert_eq!(log_level_for(true, false), LevelFilter::Debug);
+        // neither: structured logs are opt-in
+        assert_eq!(log_level_for(false, false), LevelFilter::Off);
+    }
+
+    #[test]
+    fn test_init_logger_is_idempotent() {
+        // `init_logger` installs a process-global logger via `try_init()` and
+        // returns nothing, so the only assertable property is that repeated
+        // calls do not panic. The level-selection logic it delegates to is
+        // covered by `test_log_level_for_precedence` above.
         init_logger(true, false);
-        // Test passes if we reach this point without errors
-    }
-
-    #[test]
-    fn test_logger_initialization_quiet() {
-        // Test that quiet mode initialization works correctly
         init_logger(false, true);
-        // Test passes if we reach this point without errors
-    }
-
-    #[test]
-    fn test_logger_initialization_normal() {
-        // Test that normal mode initialization works correctly
         init_logger(false, false);
-        // Test passes if we reach this point without errors
-    }
-
-    #[test]
-    fn test_logger_initialization_conflicting() {
-        // Test that conflicting flags work correctly (quiet takes precedence)
         init_logger(true, true);
-        // Test passes if we reach this point without errors
     }
 
     #[test]
@@ -278,7 +299,18 @@ mod tests {
 
     #[test]
     fn test_log_validation_complete_all_failed() {
-        log_validation_complete(0, 10, 2000); // All failed
+        // Regression: `issues > url_count` underflowed `url_count - issues`.
+        // With overflow-checks on this panicked; before that it printed
+        // 18446744073709551606 valid URLs.
+        log_validation_complete(0, 10, 2000);
+
+        // More issues than URLs saturates at zero instead of underflowing.
+        assert_eq!(valid_url_count(0, 10), 0);
+        assert_eq!(valid_url_count(3, 10), 0);
+        // Normal cases are unaffected.
+        assert_eq!(valid_url_count(10, 3), 7);
+        assert_eq!(valid_url_count(10, 0), 10);
+        assert_eq!(valid_url_count(0, 0), 0);
     }
 
     #[test]
@@ -386,30 +418,16 @@ mod tests {
     }
 
     #[test]
-    fn test_thread_safety() {
-        use std::sync::Arc;
-        use std::sync::Barrier;
-        use std::thread;
+    fn test_logging_functions_are_callable_from_multiple_threads() {
+        // The previous version of this test spawned 4 threads doing 30 log
+        // calls each and asserted nothing -- it could not detect a data race,
+        // and would have passed even if the functions were empty. What is
+        // actually worth pinning is that these take no non-Sync state, which
+        // the compiler can prove at compile time.
+        fn assert_callable_concurrently<F: Fn() + Send + Sync>(_f: F) {}
 
-        let barrier = Arc::new(Barrier::new(4));
-        let mut handles = vec![];
-
-        // Test that logging functions are thread-safe
-        for i in 0..4 {
-            let barrier = barrier.clone();
-            let handle = thread::spawn(move || {
-                barrier.wait();
-                for j in 0..10 {
-                    log_url_result(&format!("https://thread{i}.test/{j}"), Some(200), None);
-                    log_error(&format!("Error from thread {i}"), None);
-                    log_warning(&format!("Warning from thread {i}"));
-                }
-            });
-            handles.push(handle);
-        }
-
-        for handle in handles {
-            handle.join().unwrap();
-        }
+        assert_callable_concurrently(|| log_warning("probe"));
+        assert_callable_concurrently(|| log_error("probe", None));
+        assert_callable_concurrently(|| log_url_result("https://example.com", Some(200), None));
     }
 }
